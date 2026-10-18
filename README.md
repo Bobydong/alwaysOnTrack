@@ -1,6 +1,29 @@
-# G2 IMU explorer
+# AlwaysOnTrack: G2 subway companion prototype
 
-A hardware diagnostic for AlwaysOnTrack, built from the Even Hub ASR scaffold. The active entry point is now the IMU explorer; the unused ASR interface/stub remains in src/ui.ts and src/asr/stt.ts for reference. No microphone or cloud service is used.
+An Even Hub G2 and Android phone prototype for testing route-aware subway station prompts. It includes an IMU explorer for understanding device motion and an experimental station counter that uses Android phone motion with a manually supplied route. The unused ASR interface/stub from the Even Hub scaffold remains in `src/ui.ts` and `src/asr/stt.ts`. No microphone or cloud service is used.
+
+## Project status
+
+The current hackathon demo flow is working on the developer's G2 and Android test setup. The station counter can follow a sequence of named stops, detect a simulated departure and a braking-like arrival, ask the rider to veto a proposed arrival, and advance to the next stop. The timing and thresholds are exposed in the short demo preset. This is a prototype for testing the interaction and motion rules; its thresholds have not been validated on real train journeys.
+
+Completed in the current prototype:
+
+- G2 IMU exploration with live X/Y/Z values, plots, summary statistics, movement labels, and JSON/CSV export.
+- Optional Android phone motion capture and side-by-side comparison with G2 readings.
+- A route editor for entering the current stop, later stops, and expected time between each pair. The app assumes the rider starts at the first listed stop.
+- Tap-to-start tracking, phone-motion departure detection, and a segment timer that opens arrival detection after `floor(90% × segment duration)`.
+- Arrival proposals based on phone acceleration, followed by a veto countdown. Phone movement during that countdown does not cancel the proposal; a single tap vetoes it. Missing phone sensor samples cancel it because the app cannot confirm tracking continued.
+- Glasses and phone status messages for blocked detection, arrival watching, proposed arrivals, veto cooldowns, departure waiting, and trip completion.
+- Manual station correction and manual departure controls for recovering during a demo.
+- Timestamped detector events and current route/state/settings in the JSON export.
+
+Still to do or validate:
+
+- Route planning from origin to destination. Routes are currently entered manually; no Google Maps, transit, or other routing API is connected.
+- Station-specific transfer, platform, and exit instructions. The prototype currently reports stop names and detector state.
+- More motion recordings and threshold tuning, especially tests that compare ordinary seated movement with train departure and braking. The user reports the current demo transition works well; real-train reliability has not been established.
+- Phone sensor behavior during screen lock, app backgrounding, reconnection, and longer trips. The current experiment assumes the page stays in the foreground.
+- Any use of G2 IMU data to improve detection. The glasses IMU is captured for diagnostics and comparison only; it does not affect departure or arrival decisions.
 
 ## Run with your phone and G2
 
