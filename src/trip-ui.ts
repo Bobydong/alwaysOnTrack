@@ -4,7 +4,6 @@ import { tripStatus } from './trip-status'
 import { mountPlannerControls } from './planner-ui'
 import { routeTextFromPlan } from './trip-plan'
 import { glassesView, renderGlassesPreview } from './glasses-view'
-import { journeyView } from './journey-view'
 
 // Fixed NYC demonstration; durations are simulated, not MTA schedules.
 const exampleRoute = (seconds: number) => `Times Sq-42 St | 0 | Board downtown N-line to Coney Island-Stillwell Av\n34 St-Herald Sq | ${seconds} | Board downtown F-line to Brooklyn | transfer\n23 St | ${seconds} | Stay on the F train\n14 St | ${seconds} | Follow exit signs`
@@ -31,15 +30,15 @@ export function mountTripControls(tracker: StationTracker, now: () => number, on
     <label>Braking sustained motion (seconds) <input id="trip-motionSeconds" type="number" min="0.1" max="10" step="0.1" value="${defaultSettings.motionSeconds}"></label>
     <label>Settling time (seconds) <input id="trip-settlingSeconds" type="number" min="0" max="3" step="0.1" value="${defaultSettings.settlingSeconds}"></label>
     <label>Quiet dwell (seconds) <input id="trip-dwellSeconds" type="number" min="0.2" max="30" step="0.05" value="${defaultSettings.dwellSeconds}"></label>
-    <label>Veto period (seconds) <input id="trip-vetoSeconds" type="number" min="1" max="30" step="1" value="${defaultSettings.vetoSeconds}"></label>
+    <label>Correction window (seconds) <input id="trip-vetoSeconds" type="number" min="1" max="30" step="1" value="${defaultSettings.vetoSeconds}"></label>
     </div></details><button id="trip-load">Load route, then tap glasses to start</button></fieldset>
-    <p class="hint">Arrival inputs stay blocked until 90% of the expected segment duration has elapsed. Then a jolt, settling, and quiet dwell can propose an arrival. Short demo: 0.35 m/s² for 0.4 seconds, 0.3 seconds to settle, then acceleration at or below 0.25 m/s² for 0.25 seconds. No recoil is required. During the veto countdown, shifting or other phone motion does not cancel the proposal; tap to veto. Quiet readings do not measure train speed.</p>
+    <p class="hint">Arrival inputs stay blocked until 90% of the expected segment duration has elapsed. Then a jolt, settling, and quiet dwell can propose an arrival. Short demo: 0.35 m/s² for 0.4 seconds, 0.3 seconds to settle, then acceleration at or below 0.25 m/s² for 0.25 seconds. No recoil is required. Directions advance immediately when a stop is detected. During the correction window, tap if not at station to restore your previous position. Shifting or other phone motion does not reset it. Quiet readings do not measure train speed.</p>
     <div class="controls"><button id="trip-arm" disabled>Start tracking (or tap glasses)</button><button id="trip-stop" disabled>Stop tracking</button>
-    <button id="trip-depart" disabled>Mark departure now</button><button id="trip-veto" disabled>Veto arrival</button></div>
+    <button id="trip-depart" disabled>Mark departure now</button><button id="trip-veto" disabled>Not at station</button></div>
     <p id="trip-error" role="alert"></p><p id="trip-start-hint" role="status"></p><p id="trip-status" role="status"></p><p id="trip-instruction" role="status"></p><p id="trip-timing"></p><p id="trip-evidence" class="hint"></p>
     <details open><summary>Glasses layout preview</summary><svg id="glasses-preview" viewBox="0 0 576 288" role="img" aria-label="Live glasses layout preview" style="display:block;width:100%;max-width:720px;border-radius:12px;margin:12px auto"></svg><p class="hint">Live layout preview. Font appearance may differ on G2.</p></details>
     <div class="controls"><label>Correct current station <select id="trip-correction" disabled></select></label><button id="trip-correct" disabled>Set current station</button></div>
-    <p class="hint">After a correction to a transfer station, board the next train and tap. At ordinary stops, wait for departure or use Mark departure now if already moving. Veto pauses detection for 10 seconds. Arrival instructions remain visible until the next departure. At the destination, the exit instruction stays on screen.</p>
+    <p class="hint">After a correction to a transfer station, board the next train and tap. At ordinary stops, wait for departure or use Mark departure now if already moving. Correcting a detected arrival pauses detection for 10 seconds. New boarding/exit directions appear immediately during the correction window. At the destination, the exit instruction stays on screen.</p>
     <details><summary>Detection log (also included in JSON export)</summary><ol id="trip-events"></ol></details>`
 
   let lastEvent: unknown
@@ -55,15 +54,16 @@ export function mountTripControls(tracker: StationTracker, now: () => number, on
     if (diagnostic !== undefined) lastDiagnostic = diagnostic
     const t = now(), active = tracker.active
     const view = tripStatus(tracker, t)
-    const journey = journeyView(tracker)
+    const display = view.presentation, journey = display.journey
     renderGlassesPreview(document.getElementById('glasses-preview')! as unknown as SVGSVGElement, glassesView(tracker, t, lastDiagnostic))
-    el('trip-start-hint').textContent = tracker.state === 'waiting-boarding' ? 'TRANSFER: board the next train, then SINGLE-TAP THE GLASSES to resume tracking. Walking between trains is ignored.' : tracker.state === 'ready' ? 'Board your train, then SINGLE-TAP THE GLASSES to begin tracking.' : tracker.state === 'idle' ? 'First load your route. Then board your train and single-tap the glasses.' : ''
+    el('trip-start-hint').textContent = display.pending ? 'Arrival detected: directions have advanced. Tap if not at this station to restore the previous position. Wait for the correction window to finish before tapping to board the next train.' : tracker.state === 'waiting-boarding' ? 'TRANSFER: board the next train, then SINGLE-TAP THE GLASSES to resume tracking. Walking between trains is ignored.' : tracker.state === 'ready' ? 'Board your train, then SINGLE-TAP THE GLASSES to begin tracking.' : tracker.state === 'idle' ? 'First load your route. Then board your train and single-tap the glasses.' : ''
     el<HTMLFieldSetElement>('trip-config').disabled = active
     el<HTMLButtonElement>('trip-arm').disabled = !tracker.canArm
     el('trip-arm').textContent = tracker.state === 'waiting-boarding' ? 'Boarded next train: start tracking (or tap glasses)' : 'Start tracking (or tap glasses)'
     el<HTMLButtonElement>('trip-stop').disabled = !active
     el<HTMLButtonElement>('trip-depart').disabled = tracker.state !== 'waiting-departure'
     el<HTMLButtonElement>('trip-veto').disabled = tracker.state !== 'candidate'
+    el('trip-veto').textContent = display.pending ? `Not at ${display.current?.name ?? 'this station'}` : 'Not at station'
     el<HTMLButtonElement>('trip-correct').disabled = !tracker.route.length
     const select = el<HTMLSelectElement>('trip-correction')
     select.disabled = !tracker.route.length
@@ -71,11 +71,11 @@ export function mountTripControls(tracker: StationTracker, now: () => number, on
       select.replaceChildren(...tracker.route.map((s, i) => new Option(`${i + 1}. ${s.name}`, String(i))))
       lastRoute = tracker.route
     }
-    const current = tracker.route[tracker.stationIndex]?.name
-    el('trip-status').textContent = `${view.status}${current ? ` | Current: ${current} (${tracker.stationIndex + 1}/${tracker.route.length})` : ''}${tracker.nextStop ? ` | Next: ${tracker.nextStop.name}` : ''}`
+    const current = display.current?.name
+    el('trip-status').textContent = `${view.status}${current ? ` | ${display.pending ? 'Detected station' : 'Current'}: ${current} (${display.stationIndex + 1}/${tracker.route.length})` : ''}${display.nextStop ? ` | Next: ${display.nextStop.name}` : ''}`
     el('trip-timing').textContent = view.timing
-    const instruction = tracker.state === 'complete' ? 'Follow exit signs.'
-      : tracker.sensing && journey.approaching ? `Get off at ${journey.destination}. ${journey.instruction}` : view.instruction
+    const instruction = display.state === 'complete' ? 'Follow exit signs.'
+      : display.canArm ? view.instruction : tracker.sensing ? `Get off at ${journey.destination}.` : null
     el('trip-instruction').textContent = instruction ? `Instruction: ${instruction}` : ''
     el('trip-instruction').hidden = !instruction
     el('trip-evidence').textContent = `${tracker.sensing && t - tracker.lastValidAt > 1500 ? 'Waiting for fresh phone linear acceleration. ' : ''}${tracker.motionWindowMs} ms mean acceleration: ${tracker.meanMagnitude?.toFixed(3) ?? '--'} m/s²; direction consistency: ${tracker.coherence?.toFixed(2) ?? '--'} (motion needs ≥ 0.50). Glasses IMU is recorded as context; it does not drive the count.`

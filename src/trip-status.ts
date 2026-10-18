@@ -1,4 +1,5 @@
 import type { StationTracker } from './station-tracker.ts'
+import { journeyPresentation } from './journey-view.ts'
 
 const seconds = (ms: number) => `${Math.max(0, Math.ceil(ms / 1000))} s`
 
@@ -19,6 +20,7 @@ function instructionLines(instruction: string | null) {
 
 // Both screens use the same phase and deadline. ETA is never the input-block timer.
 export function tripStatus(tracker: StationTracker, now: number) {
+  const presentation = journeyPresentation(tracker)
   let status: string
   let timing: string
   switch (tracker.state) {
@@ -34,25 +36,25 @@ export function tripStatus(tracker: StationTracker, now: number) {
       status = 'Arrival inputs blocked'
       timing = `Detection opens in ${seconds((tracker.watchAt ?? now) - now)}`; break
     case 'arrival-watch':
-      status = tracker.brakingPhase
+      status = tracker.brakingPhase === 'waiting for quiet dwell' ? 'waiting to stop' : tracker.brakingPhase
       timing = 'Arrival detection OPEN'; break
     case 'candidate':
-      status = 'Possible arrival'
-      timing = `Count in ${seconds((tracker.candidateUntil ?? now) - now)}; tap to VETO`; break
+      status = 'Arrival detected'
+      timing = `Tap if not at ${presentation.current?.name ?? 'this station'}; ${seconds((tracker.candidateUntil ?? now) - now)} left`; break
     case 'cooldown':
-      status = tracker.cooldownReason ?? 'Arrival detection paused'
+      status = tracker.cooldownReason === 'Arrival vetoed' ? 'Station correction applied' : tracker.cooldownReason ?? 'Arrival detection paused'
       timing = `Detection paused: ${seconds(tracker.retryAfter - now)}`; break
     case 'complete':
       status = 'Destination reached'; timing = `Station ${tracker.stationIndex + 1}/${tracker.route.length}`; break
   }
-  const current = tracker.route[tracker.stationIndex]?.name ?? ''
-  const heading = tracker.state === 'candidate'
-    ? tracker.nextStop?.name ?? ''
-    : `${current.slice(0, 20)}${tracker.nextStop ? ` -> ${tracker.nextStop.name.slice(0, 20)}` : ''}`
+  const current = presentation.current?.name ?? ''
+  const heading = `${current.slice(0, 20)}${presentation.nextStop ? ` -> ${presentation.nextStop.name.slice(0, 20)}` : ''}`
   const sensor = tracker.sensing && now - tracker.lastValidAt > 1500 ? 'Phone motion unavailable. ' : ''
-  const instruction = tracker.currentInstruction
+  const instruction = presentation.state === 'complete' ? 'Follow exit signs.'
+    : presentation.canArm ? presentation.journey.boarding.train : tracker.currentInstruction
   // Keep the full instruction on the phone; limit the glasses to three short lines.
   return {
+    presentation,
     status,
     instruction,
     timing: `${sensor}${timing}`,
