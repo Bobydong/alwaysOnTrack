@@ -127,7 +127,8 @@ test('route API keeps the key on the server, sends subway fields, and rejects fo
   const denied = plannerApi({ apiKey: 'fixture', catalogPath: file, fetchImpl: async () => ({ ok: false, status: 403 }) })
   assert.equal((await invoke(denied, request)).code, 502)
   const unresolved = plannerApi({ apiKey: 'fixture', catalogPath: file, fetchImpl: async () => ({ ok: true, json: async () => ({ routes: [] }) }) })
-  assert.equal((await invoke(unresolved, request)).code, 422)
+  const empty = await invoke(unresolved, request)
+  assert.equal(empty.code, 422); assert.match(empty.body.error, /Google returned no subway route/)
 })
 
 test('missing key, missing catalog and provider failures are actionable without fake fallback', async () => {

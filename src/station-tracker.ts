@@ -11,13 +11,13 @@ export type TrackerSettings = {
 export const defaultSettings: TrackerSettings = {
   departureWindowMs: 500, departureThreshold: 0.35, departureSeconds: 0.7,
   windowMs: 500, motionThreshold: 0.35, quietThreshold: 0.18,
-  motionSeconds: 0.8, dwellSeconds: 3, vetoSeconds: 8,
+  motionSeconds: 0.8, dwellSeconds: 3, vetoSeconds: 20,
   settlingSeconds: 0.5,
 }
 export const demoSettings: TrackerSettings = {
   ...defaultSettings,
   windowMs: 250, motionThreshold: 0.35, quietThreshold: 0.25,
-  motionSeconds: 0.4, dwellSeconds: 0.25, vetoSeconds: 10,
+  motionSeconds: 0.4, dwellSeconds: 0.25, vetoSeconds: 20,
   settlingSeconds: 0.3,
 }
 export type TripState = 'idle' | 'ready' | 'waiting-boarding' | 'waiting-departure' | 'travelling' | 'arrival-watch' | 'candidate' | 'cooldown' | 'complete'

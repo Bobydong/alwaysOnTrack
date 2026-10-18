@@ -30,14 +30,15 @@ export function mountAgentControls(root: HTMLElement, showRoutes: (plans: TripPl
     const item = document.createElement('li'); item.textContent = `${role === 'user' ? 'You' : 'Agent'}: ${text}`; log.append(item)
   }
   fetch('/api/agent/status').then(r => r.json()).then(data => {
-    find('agent-readiness').textContent = data.configured ? `Gemini ready (${data.model}).` : 'Add GEMINI_API_KEY to .env.local on the laptop, then restart the server. Manual route search below still works.'
+    const provider = data.provider === 'groq' ? 'Groq' : 'Gemini'
+    find('agent-readiness').textContent = data.configured ? `${provider} configured (${data.model}).` : `Add ${data.provider === 'groq' ? 'GROQ_API_KEY' : 'GEMINI_API_KEY'} to .env.local on the laptop, then restart the server. Manual route search below still works.`
   }).catch(() => { find('agent-readiness').textContent = 'Agent service unavailable. Use the companion backend or manual route search below.' })
   speech?.subscribe(s => {
     if (s.revision > revision) { revision = s.revision; input.value = s.transcript; status.textContent = 'Transcript ready. Edit if needed, then press Plan my trip.' }
     find('agent-voice-status').textContent = s.phase === 'recording' ? `Listening on glasses: ${s.seconds.toFixed(1)} seconds received. Tap glasses or Finish when done.`
       : s.phase === 'starting' ? 'Opening glasses microphone...'
         : s.phase === 'stopping' ? 'Closing microphone...'
-          : s.phase === 'transcribing' ? 'Microphone off. Transcribing with Gemini...'
+          : s.phase === 'transcribing' ? 'Microphone off. Transcribing your request...'
             : s.phase === 'error' ? s.error : ''
     controls()
   })

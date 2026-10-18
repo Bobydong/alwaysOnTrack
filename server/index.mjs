@@ -4,11 +4,12 @@ import path from 'node:path'
 import { plannerApi } from './planner-api.mjs'
 import { createRoutePlanner } from './route-service.mjs'
 import { agentApi } from './agent-api.mjs'
+import { agentOptions } from './ai-config.mjs'
 
 const root = path.resolve('dist')
-const planner = createRoutePlanner({ apiKey: process.env.GOOGLE_MAPS_API_KEY, catalogPath: path.resolve(process.env.MTA_GTFS_CATALOG || 'data/mta-subway.json') })
+const planner = createRoutePlanner({ apiKey: process.env.GOOGLE_MAPS_API_KEY, placesApiKey: process.env.GOOGLE_PLACES_API_KEY || process.env.GOOGLE_MAPS_API_KEY, catalogPath: path.resolve(process.env.MTA_GTFS_CATALOG || 'data/mta-subway.json') })
 const api = plannerApi({ planner })
-const agent = agentApi({ apiKey: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL || undefined, planner })
+const agent = agentApi(agentOptions(process.env, planner))
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png' }
 createServer((req, res) => {
   void agent(req, res, () => api(req, res, async () => {

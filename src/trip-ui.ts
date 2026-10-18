@@ -3,14 +3,17 @@ import { el } from './imu-ui'
 import { tripStatus } from './trip-status'
 import { mountPlannerControls } from './planner-ui'
 import { routeTextFromStops } from './trip-plan'
+import type { TripPlan } from './trip-plan'
 import type { GlassesSpeech } from './asr/stt.ts'
 import { speechGlasses } from './asr/speech-view.ts'
 import { glassesView, renderGlassesPreview } from './glasses-view'
+import type { GlassesPanel } from './glasses-view'
 
 // Fixed NYC demonstration; durations are simulated, not MTA schedules.
 const exampleRoute = (seconds: number) => `Times Sq-42 St | 0 | Board downtown N-line to Coney Island-Stillwell Av\n34 St-Herald Sq | ${seconds} | Board downtown F-line to Brooklyn | transfer\n23 St | ${seconds} | Stay on the F train\n14 St | ${seconds} | Follow exit signs`
 
-export function mountTripControls(tracker: StationTracker, now: () => number, onArm: () => void, speech?: GlassesSpeech) {
+export function mountTripControls(tracker: StationTracker, now: () => number, onArm: () => void, speech?: GlassesSpeech,
+  preparation?: { panels: () => GlassesPanel[] | null; busy: () => boolean; visible: () => boolean; loaded: () => void }) {
   const style = document.createElement('style')
   style.textContent = '#trip-panel fieldset{border:1px solid #52687b;border-radius:7px;padding:12px}#trip-panel input{font:inherit;padding:8px;width:90px}#trip-panel details{margin:12px 0}#trip-events{max-height:280px;overflow:auto;overflow-wrap:anywhere}#trip-error{color:#ff8c92}#trip-route{height:110px}#trip-planner input{width:260px;max-width:100%}#trip-planner input[type=checkbox]{width:auto}#trip-planner textarea{width:100%;min-height:100px}'
   document.head.append(style)
@@ -21,7 +24,7 @@ export function mountTripControls(tracker: StationTracker, now: () => number, on
     <div class="controls"><button id="trip-real-preset">NYC example (simulated 3-minute segments)</button><button id="trip-demo-preset">NYC demo with transfer (12-second segments)</button></div>
     <label for="trip-route">One station per line: name | seconds | optional instruction | transfer</label>
     <textarea id="trip-route" aria-label="Trip route">${exampleRoute(12)}</textarea>
-    <p class="hint">The default NYC demo is preloaded: N from Times Sq-42 St to 34 St-Herald Sq, then F via 23 St to 14 St. Each segment takes a simulated 12 seconds; no route API request is made. This is a demonstration, not a verified live itinerary. Use 0 seconds for the starting station. Add “transfer” only to intermediate stops where you change trains. Instructions are optional (160 characters max); old name | seconds routes still work.</p>
+    <p class="hint">The optional NYC demo uses N from Times Sq-42 St to 34 St-Herald Sq, then F via 23 St to 14 St. Select a preset and load it to use it; it is not preloaded. This is a demonstration, not a verified live itinerary. Use 0 seconds for the starting station. Add “transfer” only to intermediate stops where you change trains. Instructions are optional (160 characters max); old name | seconds routes still work.</p>
     <details><summary>Adjust timing and motion detection</summary><div class="controls">
     <label>Departure window (ms) <input id="trip-departureWindowMs" type="number" min="100" max="1000" step="50" value="${defaultSettings.departureWindowMs}"></label>
     <label>Departure threshold (m/s²) <input id="trip-departureThreshold" type="number" min="0.01" max="20" step="0.01" value="${defaultSettings.departureThreshold}"></label>
@@ -47,22 +50,24 @@ export function mountTripControls(tracker: StationTracker, now: () => number, on
   let lastRoute: unknown
   let lastDiagnostic: string | undefined
   const readSettings = () => Object.fromEntries(Object.keys(defaultSettings).map(k => [k, Number(el<HTMLInputElement>(`trip-${k}`).value)])) as TrackerSettings
-  const plannerControls = mountPlannerControls(el('trip-planner'), (plan, options) => {
-    if (options.demoTiming) for (const [key, value] of Object.entries(demoSettings)) el<HTMLInputElement>(`trip-${key}`).value = String(value)
-    tracker.loadTripPlan(plan, readSettings(), now(), options.demoTiming ? 12 : undefined)
+  function loadPrepared(plan: TripPlan, demoTiming = el<HTMLInputElement>('plan-demo').checked) {
+    if (demoTiming) for (const [key, value] of Object.entries(demoSettings)) el<HTMLInputElement>(`trip-${key}`).value = String(value)
+    tracker.loadTripPlan(plan, readSettings(), now(), demoTiming ? 12 : undefined)
     el<HTMLTextAreaElement>('trip-route').value = routeTextFromStops(tracker.route)
+    preparation?.loaded()
     el('trip-error').textContent = ''; render()
-  }, speech)
+  }
+  const plannerControls = mountPlannerControls(el('trip-planner'), (plan, options) => loadPrepared(plan, options.demoTiming), speech)
   function render(diagnostic?: string) {
     if (diagnostic !== undefined) lastDiagnostic = diagnostic
     const t = now(), active = tracker.active
     const view = tripStatus(tracker, t)
     const display = view.presentation, journey = display.journey
     renderGlassesPreview(document.getElementById('glasses-preview')! as unknown as SVGSVGElement,
-      speech && (speech.busy || speech.snapshot().micMayBeOn) ? speechGlasses(speech.snapshot()) : glassesView(tracker, t, lastDiagnostic))
+      preparation?.panels() ?? (speech && (speech.busy || speech.snapshot().micMayBeOn) ? speechGlasses(speech.snapshot()) : glassesView(tracker, t, lastDiagnostic)))
     el('trip-start-hint').textContent = display.pending ? 'Arrival detected: directions have advanced. Tap if not at this station to restore the previous position. Wait for the correction window to finish before tapping to board the next train.' : tracker.state === 'waiting-boarding' ? 'TRANSFER: board the next train, then SINGLE-TAP THE GLASSES to resume tracking. Walking between trains is ignored.' : tracker.state === 'ready' ? 'Board your train, then SINGLE-TAP THE GLASSES to begin tracking.' : tracker.state === 'idle' ? 'First load your route. Then board your train and single-tap the glasses.' : ''
-    el<HTMLFieldSetElement>('trip-config').disabled = active
-    el<HTMLButtonElement>('trip-arm').disabled = !tracker.canArm || plannerControls.busy() || !!speech?.busy || !!speech?.snapshot().micMayBeOn
+    el<HTMLFieldSetElement>('trip-config').disabled = active || !!preparation?.busy()
+    el<HTMLButtonElement>('trip-arm').disabled = !tracker.canArm || !!preparation?.visible() || plannerControls.busy() || !!speech?.busy || !!speech?.snapshot().micMayBeOn
     el('trip-arm').textContent = tracker.state === 'waiting-boarding' ? 'Boarded next train: start tracking (or tap glasses)' : 'Start tracking (or tap glasses)'
     el<HTMLButtonElement>('trip-stop').disabled = !active
     el<HTMLButtonElement>('trip-depart').disabled = tracker.state !== 'waiting-departure'
@@ -93,13 +98,14 @@ export function mountTripControls(tracker: StationTracker, now: () => number, on
     }
   }
   function arm() {
-    if (plannerControls.busy() || speech?.busy || speech?.snapshot().micMayBeOn) { el('trip-error').textContent = 'Finish planning or cancel voice input before starting tracking.'; return }
+    if (preparation?.visible() || plannerControls.busy() || speech?.busy || speech?.snapshot().micMayBeOn) { el('trip-error').textContent = 'Finish planning or load a route before starting tracking.'; return }
     tracker.arm(now()); if (tracker.active) onArm(); render()
   }
   el('trip-load').onclick = () => {
     try {
       const settings = readSettings()
       tracker.load(parseRoute(el<HTMLTextAreaElement>('trip-route').value), settings, now())
+      preparation?.loaded()
       el('trip-error').textContent = ''; render()
     } catch (error) { el('trip-error').textContent = String(error) }
   }
@@ -118,11 +124,11 @@ export function mountTripControls(tracker: StationTracker, now: () => number, on
   el('trip-correct').onclick = () => { tracker.correct(Number(el<HTMLSelectElement>('trip-correction').value), now()); render() }
   if (tracker.state === 'idle') {
     for (const [key, value] of Object.entries(demoSettings)) el<HTMLInputElement>(`trip-${key}`).value = String(value)
-    tracker.load(parseRoute(exampleRoute(12)), demoSettings, now())
   }
   render()
   return {
     render,
+    loadPrepared,
     tap() {
       if (tracker.canArm) { arm(); return true }
       if (tracker.state === 'candidate') { tracker.veto(now()); render(); return true }

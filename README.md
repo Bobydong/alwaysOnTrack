@@ -1,6 +1,6 @@
 # AlwaysOnTrack: G2 subway companion prototype
 
-An Even Hub G2 and Android phone prototype for route-aware subway station prompts. It combines a phone-motion station counter, Google Routes + MTA schedule matching, and a Gemini trip-planning agent with short G2 microphone recordings for speech input. Manual route search and itinerary import remain available. Route preparation needs internet; tracking runs on the phone.
+An Even Hub G2 and Android phone prototype for route-aware subway station prompts. It combines a phone-motion station counter, Google Routes + MTA schedule matching, and a trip-planning agent with short G2 microphone recordings for speech input. Groq provides Whisper Large V3 Turbo transcription and GPT-OSS 120B intent/tool calling; Gemini remains an optional provider. Manual route search and itinerary import remain available. Route preparation needs internet; tracking runs on the phone.
 
 ## Project status
 
@@ -8,7 +8,8 @@ The current hackathon demo flow is working on the developer's G2 and Android tes
 
 Completed in the current prototype:
 
-- Gemini speech transcription and a constrained trip-planning agent: speak or type a request, answer location questions, review verified Google/MTA itineraries, and explicitly load one. The agent can request routes and recommend an existing result; it cannot invent intermediate stops. Local fixture tests pass; live Gemini and physical microphone validation await key configuration.
+- Glasses-first speech planning: tap to record, tap to submit, review understood From/To locations, scroll between Yes/No and tap to confirm. Yes automatically plans and loads a verified Google/MTA itinerary into the boarding screen; No returns to recording. Phone search/import remains available. Live speech/planning has been tested; the new scroll confirmation flow still needs a physical G2 check.
+- Spoken landmarks resolve through Google Places API (New) before confirmation. Multiple matches can be scrolled and selected on the glasses; confirmation includes names and street addresses. Routes receives the selected server-verified place IDs. Places API access must be enabled for the Google key.
 - An optional 12-second-per-stop demo timing override for generated plans. Original provider schedules remain in the prepared itinerary and export; the tracker identifies simulated timing separately.
 - G2 IMU exploration with live X/Y/Z values, plots, summary statistics, movement labels, and JSON/CSV export.
 - Optional Android phone motion capture and side-by-side comparison with G2 readings.
@@ -26,7 +27,7 @@ Completed in the current prototype:
 
 Still to do or validate:
 
-- Live Gemini transcription and conversation validation once `GEMINI_API_KEY` is configured, followed by a complete spoken NYC transfer journey on the physical G2. Google API access and the MTA conversion pipeline were previously checked; each demo route still needs review.
+- Physical G2 validation of the new full-screen preparation flow, Yes/No scrolling, text fit, retry behavior, and transition into the corner boarding layout. Gemini access, speech/planning, and Google/MTA integration have been checked; each demo route still needs review.
 - Automatic sourcing and verification of platform and exit details. Preset directions are fictional examples; planned itineraries currently use line/headsign and general exit-sign guidance. The local transfer loop has been tested on G2; externally planned journeys still need a live check.
 - More motion recordings and threshold tuning, especially tests that compare ordinary seated movement with train departure and braking. The user reports the current demo transition works well; real-train reliability has not been established.
 - Reliable screen-lock/background sensing is outside this MVP. The lock test kept JavaScript and glasses communication running but lost phone acceleration. Keep the page visible and the phone screen on during the five-minute demo; no native Android companion or wake-lock feature is included.
@@ -49,7 +50,7 @@ If the node/npm shims say no active version is configured, activate your install
 
 ## Online route preparation
 
-For voice and conversational planning, see [Gemini setup and demo flow](docs/voice-agent.md). Add the separate `GEMINI_API_KEY` to `.env.local` and restart the server when ready. Manual Google/MTA search works without it.
+For voice and conversational planning, see [AI setup and demo flow](docs/voice-agent.md). Set `AI_PROVIDER=groq` and `GROQ_API_KEY` in `.env.local`, then restart the server. Use `AI_PROVIDER=gemini` to select the previous Gemini integration. Manual Google/MTA search works without an AI key.
 
 1. Set `GOOGLE_MAPS_API_KEY` in `.env.local` on the laptop. Enable Routes API and billing for the key. Never use a `VITE_` prefix for this secret.
 2. Run `npm run gtfs:import` to import the official MTA supplemented subway schedules. If downloading fails, download the supplemented ZIP from [MTA developer resources](https://www.mta.info/developers) and run `npm run gtfs:import -- "path/to/feed.zip"`.
@@ -64,7 +65,7 @@ See [prepared-trip format and routing setup](docs/routing.md) for the API contra
 
 Enable phone motion over Android localhost/USB forwarding, then use the new station-counter panel:
 
-On launch, a NYC demo is preloaded and waits for your boarding tap: **Times Sq-42 St (N) → 34 St-Herald Sq (transfer to F) → 23 St → 14 St**. It uses the short-demo detector settings and simulated 12-second segments (arrival sensing opens after 10 seconds). It makes no Google request and is not a verified live itinerary. Enable phone motion before tapping to start; at Herald Sq, tap again after boarding the F train.
+On launch, the glasses show the spoken-trip prompt. The optional NYC demo is available on the phone: **Times Sq-42 St (N) → 34 St-Herald Sq (transfer to F) → 23 St → 14 St**. Select the preset and load the route explicitly. It uses simulated 12-second segments (arrival sensing opens after 10 seconds) and makes no Google request. It is not a verified live itinerary.
 
 1. Choose the three-minute example itinerary or the **Short demo with transfer (12-second segments)**. Both have a starting station, an ordinary stop, a transfer station, and a destination. Edit names, durations, and instructions as needed. Use `station name | travel seconds from previous station | optional instruction | transfer`; the last field is only for intermediate stops where you change trains. The starting station uses 0 seconds. Old two-field routes still work. Press **Load route, then tap glasses to start**.
 2. **Board the first train and single-tap the glasses to begin tracking**, or press **Start tracking (or tap glasses)** on the phone. Motion does not start tracking before your tap. Arming starts raw recording automatically; the travel timer waits for departure motion. Keep the phone secured in one position and the page in the foreground. G2 IMU can also be started for comparison; its readings do not control the station count.

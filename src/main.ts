@@ -9,10 +9,12 @@ import { LockTest, lockTestStorageKey, readLockTestReport, type LockTestReport }
 import { lockTestGlasses, mountLockTestControls, renderLockTest } from './lock-test-ui'
 import { GlassesSpeech } from './asr/stt'
 import { speechGlasses } from './asr/speech-view'
+import { GlassesPlanner } from './glasses-planner'
+import { planningView } from './planning-view'
 
 mountDiagnostic()
 const demo = new URLSearchParams(location.search).get('demo') === '1'
-el('mode').textContent = demo ? 'SYNTHETIC PREVIEW: these values are generated, not G2 sensor data.' : 'LIVE G2 MODE: no synthetic sensor data. Voice planning uses the glasses microphone and the Gemini backend; sensor tests work without an AI key.'
+el('mode').textContent = demo ? 'SYNTHETIC PREVIEW: these values are generated, not G2 sensor data.' : 'LIVE G2 MODE: no synthetic sensor data. Voice planning uses the glasses microphone and the configured AI backend; sensor tests work without an AI key.'
 const origin = performance.now()
 const stamp = () => performance.now() - origin
 const tracker = new StationTracker()
@@ -46,9 +48,42 @@ const speech = new GlassesSpeech(async open => {
   if (open) el<HTMLButtonElement>('trip-arm').disabled = true
   return bridge.audioControl(open)
 })
+const glassesPlanner = new GlassesPlanner(speech, async plan => {
+  tripUI.loadPrepared(plan)
+  await enablePhoneMotion()
+})
+const preparation = {
+  panels: () => glassesPlanner.visible && !lockTest.active ? planningView(glassesPlanner.snapshot(), speech.snapshot()) : null,
+  busy: () => glassesPlanner.busy,
+  visible: () => glassesPlanner.visible,
+  loaded: () => glassesPlanner.dismiss(),
+}
 const tripUI = mountTripControls(tracker, stamp, () => {
   if (!recording) { recording = true; mark('trip-tracking-start') }
-}, speech)
+}, speech, preparation)
+// Phone equivalents make the glasses-only flow inspectable and recoverable.
+const setup = document.createElement('div')
+setup.innerHTML = '<h3>Glasses trip setup</h3><p id="glasses-setup-status" role="status"></p><div class="controls"><button id="glasses-setup-tap">Tap / select</button><button id="glasses-setup-scroll">Scroll Yes / No</button><button id="glasses-setup-reset">New spoken trip</button></div>'
+el('trip-panel').prepend(setup)
+el('glasses-setup-tap').onclick = () => { void glassesPlanner.tap() }
+el('glasses-setup-scroll').onclick = () => glassesPlanner.scroll()
+el('agent-record').onclick = () => {
+  void (async () => { if (!glassesPlanner.visible) await glassesPlanner.reset(); await glassesPlanner.tap() })()
+}
+el('glasses-setup-reset').onclick = () => {
+  if (tracker.active || lockTest.active) { status('Stop tracking or the lock test before planning a new trip.'); return }
+  void glassesPlanner.reset()
+}
+function renderSetup() {
+  const s = glassesPlanner.snapshot()
+  const from = s.originCandidates?.[s.originIndex ?? 0], to = s.destinationCandidates?.[s.destinationIndex ?? 0]
+  el('glasses-setup-status').textContent = `${s.phase}${from && to ? `: ${from.name}, ${from.address} → ${to.name}, ${to.address}` : ''}${s.phase === 'confirm' ? `. Selected: ${s.yes ? 'Yes' : 'No'}` : ''}${s.error ? `: ${s.error}` : ''}`
+  el<HTMLButtonElement>('glasses-setup-scroll').disabled = !['confirm', 'choose-origin', 'choose-destination'].includes(s.phase)
+  el<HTMLButtonElement>('glasses-setup-tap').disabled = ['loaded', 'understanding', 'planning'].includes(s.phase) || lockTest.active
+  tripUI.render(); refreshGlasses()
+}
+glassesPlanner.subscribe(renderSetup)
+renderSetup()
 let lastSpeechPhase = speech.phase
 speech.subscribe(s => { if (s.phase !== lastSpeechPhase) { lastSpeechPhase = s.phase; refreshGlasses() } })
 function saveLockTest(force = false) {
@@ -267,6 +302,7 @@ function cleanup() {
   if(closed)return
   lockTest.event('app-exit', Date.now()); saveLockTest(true)
   closed=true; running=false; recording=false; window.clearInterval(previewTimer)
+  glassesPlanner.dismiss()
   void speech.cancel()
   tracker.stop(stamp())
   if(phoneListener)window.removeEventListener('devicemotion',phoneListener)
@@ -278,7 +314,7 @@ async function initialize() {
   if(demo){ready=true; controls(); status('Synthetic preview ready. Start IMU to exercise the dashboard.');return}
   const waiting=window.setTimeout(()=>status('Still waiting for the Even App bridge. Open this URL via the Even app QR flow. A normal browser has no G2 bridge. Use ?demo=1 only for synthetic preview.'),7000)
   bridge=await waitForEvenAppBridge(); window.clearTimeout(waiting)
-  const panels = glassesView(tracker, stamp())
+  const panels = preparation.panels() ?? glassesView(tracker, stamp())
   const result=await bridge.createStartUpPageContainer(new CreateStartUpPageContainer({
     containerTotalNum:panels.length,textObject:panels.map(panel => new TextContainerProperty(panel)),
   }))
@@ -296,13 +332,19 @@ async function initialize() {
     if(sysType===OsEventTypeList.SYSTEM_EXIT_EVENT || sysType===OsEventTypeList.ABNORMAL_EXIT_EVENT){cleanup();return}
     if(sysType===OsEventTypeList.FOREGROUND_ENTER_EVENT){lockTest.event('host-foreground-enter', Date.now()); tracker.suspend(stamp(), 'App returned to foreground; rebuilding sensor evidence.');status('Returned to foreground. Check stream continuity; if stale, Stop IMU then Start.');return}
     if(sysType===OsEventTypeList.FOREGROUND_EXIT_EVENT){lockTest.event('host-foreground-exit', Date.now());saveLockTest(true);return}
+    if (sysType === OsEventTypeList.SCROLL_TOP_EVENT || textType === OsEventTypeList.SCROLL_TOP_EVENT ||
+      sysType === OsEventTypeList.SCROLL_BOTTOM_EVENT || textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
+      if (!lockTest.active && glassesPlanner.visible) glassesPlanner.scroll(sysType === OsEventTypeList.SCROLL_TOP_EVENT || textType === OsEventTypeList.SCROLL_TOP_EVENT ? -1 : 1)
+      return
+    }
     if(sysType===OsEventTypeList.CLICK_EVENT || textType===OsEventTypeList.CLICK_EVENT){
+      if (lockTest.active) { lockTest.tap(Date.now(), document.hidden); saveLockTest(true); refreshGlasses(); return }
+      if (glassesPlanner.visible) { void glassesPlanner.tap(); return }
       if (speech.busy || speech.snapshot().micMayBeOn) {
         if (speech.phase === 'recording') void speech.stop()
         else if (speech.phase === 'error') void speech.cancel()
         return
       }
-      if (lockTest.active) { lockTest.tap(Date.now(), document.hidden); saveLockTest(true); refreshGlasses(); return }
       if (!tripUI.tap()) mark('glasses tap: '+label())
       refreshGlasses()
     }
@@ -314,8 +356,9 @@ async function initialize() {
   ready=true; controls(); status('G2 page ready. Press Start IMU on the phone, then Start recording.')
 }
 function displayPhase() {
-  if (speech.busy || speech.snapshot().micMayBeOn) return `speech:${speech.phase}`
   if (lockTest.active) return `lock-test:${lockTest.report!.id}`
+  if (glassesPlanner.visible) return `planning:${JSON.stringify(glassesPlanner.snapshot())}:${speech.phase}`
+  if (speech.busy || speech.snapshot().micMayBeOn) return `speech:${speech.phase}`
   return `${tracker.state}:${tracker.stationIndex}:${tracker.brakingPhase}:${tracker.cooldownReason}`
 }
 function glassesDiagnostic() {
@@ -325,8 +368,8 @@ function glassesDiagnostic() {
 function refreshGlasses() {
   if(!bridge || !ready || closed || renderBusy)return
   const now = stamp()
-  const panels = speech.busy || speech.snapshot().micMayBeOn ? speechGlasses(speech.snapshot())
-    : lockTest.active ? lockTestGlasses(lockTest.report!, Date.now()) : glassesView(tracker, now, glassesDiagnostic())
+  const panels = lockTest.active ? lockTestGlasses(lockTest.report!, Date.now()) : preparation.panels() ??
+    (speech.busy || speech.snapshot().micMayBeOn ? speechGlasses(speech.snapshot()) : glassesView(tracker, now, glassesDiagnostic()))
   const layout = glassesLayoutKey(panels)
   if(layout === glassLayout && panels.every(panel => glassContents.get(panel.containerID) === panel.content))return
   const phaseAtSend = displayPhase()
@@ -385,6 +428,7 @@ document.addEventListener('visibilitychange', () => {
   lockTest.visibility(document.hidden, Date.now()); saveLockTest(true)
   if (document.hidden) tracker.suspend(stamp(), 'Page hidden; motion continuity is unknown.')
   if (document.hidden && speech.busy) void speech.cancel()
+  if (document.hidden && glassesPlanner.visible && glassesPlanner.busy) void glassesPlanner.reset()
 })
 window.addEventListener('pagehide', () => { lockTest.event('pagehide', Date.now()); saveLockTest(true) })
 void initialize().catch(error=>{status(String(error));controls()})
