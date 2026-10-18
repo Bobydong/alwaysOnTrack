@@ -1,6 +1,6 @@
 import type { PhoneMotionSample } from './imu-data'
 
-export type Stop = { name: string; travelSeconds: number }
+export type Stop = { name: string; travelSeconds: number; instruction?: string; transfer?: boolean }
 export type TrackerSettings = {
   departureWindowMs: number; departureThreshold: number; departureSeconds: number
   windowMs: number; motionThreshold: number; quietThreshold: number
@@ -19,20 +19,38 @@ export const demoSettings: TrackerSettings = {
   motionSeconds: 0.4, dwellSeconds: 0.25, vetoSeconds: 6,
   settlingSeconds: 0.3,
 }
-export type TripState = 'idle' | 'ready' | 'waiting-departure' | 'travelling' | 'arrival-watch' | 'candidate' | 'cooldown' | 'complete'
+export type TripState = 'idle' | 'ready' | 'waiting-boarding' | 'waiting-departure' | 'travelling' | 'arrival-watch' | 'candidate' | 'cooldown' | 'complete'
 export type TripEvent = { t: number; action: string; state: TripState; stationIndex: number; detail: Record<string, unknown> }
+
+function validateRoute(route: Stop[]): Stop[] {
+  if (route.length < 2 || route.length > 50) throw new Error('Enter 2–50 stations, starting with your current station.')
+  return route.map((stop, i) => {
+    if (typeof stop.name !== 'string' || !stop.name.trim() || !Number.isFinite(stop.travelSeconds) ||
+        (i === 0 ? stop.travelSeconds !== 0 : stop.travelSeconds < 5 || stop.travelSeconds > 7200)) {
+      throw new Error('Use a station name and travel seconds (5–7200); the first station uses 0 seconds.')
+    }
+    if (stop.instruction !== undefined && (typeof stop.instruction !== 'string' || stop.instruction.length > 160)) {
+      throw new Error('Keep each station instruction within 160 characters.')
+    }
+    if (stop.transfer !== undefined && typeof stop.transfer !== 'boolean') throw new Error('Transfer must be true or false.')
+    if (stop.transfer && (i === 0 || i === route.length - 1)) throw new Error('Only intermediate stops can be transfers.')
+    const instruction = stop.instruction?.trim().replace(/\s+/g, ' ')
+    return { name: stop.name.trim().slice(0, 100), travelSeconds: stop.travelSeconds,
+      ...(instruction ? { instruction } : {}), ...(stop.transfer ? { transfer: true } : {}) }
+  })
+}
 
 export function parseRoute(text: string): Stop[] {
   const stops = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean).map((line, i) => {
     const parts = line.split('|').map(s => s.trim())
     const travelSeconds = i === 0 ? 0 : Number(parts[1])
-    if (!parts[0] || parts.length > 2 || (i > 0 && (!Number.isFinite(travelSeconds) || travelSeconds < 5 || travelSeconds > 7200))) {
-      throw new Error('Use one station per line: station name | seconds from previous stop (5–7200 seconds).')
+    if (parts.length > 4 || (parts[3] && parts[3].toLowerCase() !== 'transfer') ||
+        (i === 0 && parts[1] && Number(parts[1]) !== 0)) {
+      throw new Error('Use: station | seconds | optional instruction | transfer (only when changing trains).')
     }
-    return { name: parts[0].slice(0, 100), travelSeconds }
+    return { name: parts[0], travelSeconds, instruction: parts[2], transfer: parts[3]?.toLowerCase() === 'transfer' }
   })
-  if (stops.length < 2 || stops.length > 50) throw new Error('Enter 2–50 stations, starting with your current station.')
-  return stops
+  return validateRoute(stops)
 }
 
 // Experimental motion evidence: a jolt, a settling interval, then quiet.
@@ -57,7 +75,13 @@ export class StationTracker {
   private stale = false
   private lastIgnoredAt = -Infinity
 
-  get active() { return ['waiting-departure', 'travelling', 'arrival-watch', 'candidate', 'cooldown'].includes(this.state) }
+  get active() { return ['waiting-boarding', 'waiting-departure', 'travelling', 'arrival-watch', 'candidate', 'cooldown'].includes(this.state) }
+  get sensing() { return this.active && this.state !== 'waiting-boarding' }
+  get canArm() { return this.state === 'ready' || this.state === 'waiting-boarding' }
+  get currentInstruction() {
+    return ['ready', 'waiting-boarding', 'waiting-departure', 'complete'].includes(this.state)
+      ? this.route[this.stationIndex]?.instruction ?? null : null
+  }
   get nextStop() { return this.route[this.stationIndex + 1] }
   get motionWindowMs() { return this.state === 'waiting-departure' ? this.settings.departureWindowMs : this.settings.windowMs }
   get brakingPhase() {
@@ -84,7 +108,7 @@ export class StationTracker {
   load(route: Stop[], settings: TrackerSettings, now: number) {
     if (this.active) throw new Error('Stop tracking before replacing the route or detector settings.')
     // Validate both UI input and programmatic callers.
-    const checked = parseRoute(route.map((s, i) => `${s.name}${i ? ` | ${s.travelSeconds}` : ''}`).join('\n'))
+    const checked = validateRoute(route)
     if (Object.values(settings).some(v => !Number.isFinite(v)) ||
         settings.departureWindowMs < 100 || settings.departureWindowMs > 1000 ||
         settings.departureThreshold <= 0 || settings.departureThreshold > 20 || settings.departureSeconds < 0.1 || settings.departureSeconds > 10 ||
@@ -95,11 +119,13 @@ export class StationTracker {
     this.route = checked; this.settings = { ...settings }; this.stationIndex = 0; this.departureAt = null
     this.candidateUntil = null; this.retryAfter = -Infinity; this.cooldownReason = null; this.resetEvidence(); this.state = 'ready'
     this.log(now, 'route-loaded', { route: this.route, settings: this.settings })
+    this.logInstruction(now)
   }
   arm(now: number) {
-    if (this.state !== 'ready') return
+    if (!this.canArm) return
+    const boardingAfterTransfer = this.state === 'waiting-boarding'
     this.state = 'waiting-departure'; this.resetEvidence(); this.lastValidAt = -Infinity; this.stale = false
-    this.log(now, 'armed', { reason: 'Waiting for sustained departure motion; timer has not started.' })
+    this.log(now, 'armed', { boardingAfterTransfer, reason: 'Waiting for sustained departure motion; timer has not started.' })
   }
   stop(now: number) {
     if (!this.route.length) return
@@ -111,14 +137,16 @@ export class StationTracker {
   }
   private depart(now: number, action: string) {
     const evidence = this.evidence()
+    const clearedInstruction = this.currentInstruction
     this.departureAt = now; this.state = 'travelling'; this.retryAfter = -Infinity; this.cooldownReason = null; this.resetEvidence()
-    this.log(now, action, { ...evidence, expectedAt: this.expectedAt, watchAt: this.watchAt })
+    this.log(now, action, { ...evidence, clearedInstruction, expectedAt: this.expectedAt, watchAt: this.watchAt })
   }
   correct(index: number, now: number) {
     if (!Number.isInteger(index) || index < 0 || index >= this.route.length) return
     this.stationIndex = index; this.departureAt = null; this.candidateUntil = null; this.retryAfter = -Infinity; this.cooldownReason = null; this.resetEvidence()
-    this.state = index === this.route.length - 1 ? 'complete' : 'waiting-departure'
-    this.log(now, 'manual-station-correction', { reason: 'Current station set by user; waiting for a new departure.' })
+    this.state = this.stationState()
+    this.log(now, 'manual-station-correction', { reason: 'Current station set by user.', transfer: !!this.route[index].transfer })
+    this.logInstruction(now)
   }
   veto(now: number) {
     if (this.state !== 'candidate') return
@@ -131,11 +159,22 @@ export class StationTracker {
   }
   private accept(now: number) {
     this.stationIndex++; this.departureAt = null; this.candidateUntil = null; this.resetEvidence()
-    this.state = this.stationIndex === this.route.length - 1 ? 'complete' : 'waiting-departure'
-    this.log(now, 'arrival-counted', { station: this.route[this.stationIndex].name, reason: 'Jolt, settling, quiet dwell, and veto period completed.' })
+    this.state = this.stationState()
+    this.log(now, 'arrival-counted', { station: this.route[this.stationIndex].name, transfer: !!this.route[this.stationIndex].transfer,
+      reason: 'Jolt, settling, quiet dwell, and veto period completed.' })
+    this.logInstruction(now)
+  }
+  private stationState(): TripState {
+    if (this.stationIndex === this.route.length - 1) return 'complete'
+    return this.route[this.stationIndex].transfer ? 'waiting-boarding' : 'waiting-departure'
+  }
+  private logInstruction(now: number) {
+    if (this.currentInstruction) this.log(now, 'station-instruction', {
+      station: this.route[this.stationIndex].name, instruction: this.currentInstruction,
+    })
   }
   suspend(now: number, reason: string) {
-    if (!this.active) return
+    if (!this.sensing) return
     if (this.state === 'candidate') {
       this.cooldown(now, 'Arrival cancelled: phone motion unavailable')
       this.log(now, 'candidate-cancelled', { reason })
@@ -145,7 +184,7 @@ export class StationTracker {
     this.stale = true
   }
   tick(now: number) {
-    if (!this.active) return
+    if (!this.sensing) return
     if (now - this.lastValidAt > 1500) this.suspend(now, 'Phone linear acceleration missing or paused; no dwell inferred from silence.')
     const watchAt = this.watchAt
     if (this.state === 'travelling' && watchAt !== null && now >= watchAt) {
@@ -156,10 +195,10 @@ export class StationTracker {
       this.state = 'arrival-watch'; this.cooldownReason = null; this.resetEvidence()
       this.log(now, 'arrival-cooldown-ended', { reason: 'Waiting for a new jolt; cooldown motion was discarded.' })
     }
-    // Timers alone never count a station. Acceptance requires a fresh quiet sample.
+    // Timers alone never count a station. Acceptance requires a fresh sensor sample.
   }
   ingest(sample: PhoneMotionSample) {
-    if (!this.active || sample.t <= this.lastValidAt) return
+    if (!this.sensing || sample.t <= this.lastValidAt) return
     this.tick(sample.t)
     if (sample.t - this.lastValidAt > 500) this.suspend(sample.t, 'Sample gap exceeded 500 ms; rebuilding continuous motion/dwell evidence.')
     const { x, y, z } = sample.acceleration
@@ -223,6 +262,7 @@ export class StationTracker {
     return { route: this.route, settings: this.settings, state: this.state, stationIndex: this.stationIndex,
       departureAt: this.departureAt, watchAt: this.watchAt, expectedAt: this.expectedAt, candidateUntil: this.candidateUntil,
       retryAfter: Number.isFinite(this.retryAfter) ? this.retryAfter : null, cooldownReason: this.cooldownReason,
+      currentInstruction: this.currentInstruction,
       brakingPhase: this.brakingPhase,
       detector: 'Experimental mean linear acceleration with separate departure and braking settings. Braking requires a coherent jolt, settling, then quiet dwell. Recoil is not required. Quiet is not proof of zero train speed. No calibrated confidence or physical braking classification.',
       events: this.events }

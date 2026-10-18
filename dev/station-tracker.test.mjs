@@ -3,10 +3,10 @@ import assert from 'node:assert/strict'
 import { StationTracker, defaultSettings, demoSettings, parseRoute } from '../src/station-tracker.ts'
 import { tripStatus } from '../src/trip-status.ts'
 
-function session(settings = defaultSettings, armed = true) {
+function session(settings = defaultSettings, armed = true, routeText = 'Start\nMiddle | 12\nEnd | 12') {
   const tracker = new StationTracker()
   let t = 0
-  tracker.load(parseRoute('Start\nMiddle | 12\nEnd | 12'), settings, t)
+  tracker.load(parseRoute(routeText), settings, t)
   if (armed) tracker.arm(t)
   const feed = (ms, acceleration = { x: 0.02, y: 0, z: 0 }) => {
     for (let i = 0; i < ms; i += 20) {
@@ -271,4 +271,99 @@ test('veto expiry counts exactly once and switches both displays to the next dep
   assert.ok(!accepted.glassesText.includes('VETO'))
   s.feed(5000)
   assert.equal(s.tracker.events.filter(e => e.action === 'arrival-counted').length, 1)
+})
+
+const transferRoute = 'Start | 0 | Board Blue Line\nMiddle | 12 | Stay on Blue Line\nJunction | 12 | Change to Green Line | transfer\nEnd | 12 | Use north exit'
+
+test('old routes remain valid and itinerary metadata survives load and export', () => {
+  assert.deepEqual(parseRoute('A\nB | 12'), [{ name: 'A', travelSeconds: 0 }, { name: 'B', travelSeconds: 12 }])
+  const s = session(demoSettings, false, transferRoute)
+  assert.equal(s.tracker.route[2].transfer, true)
+  assert.equal(s.tracker.route[2].instruction, 'Change to Green Line')
+  assert.equal(s.tracker.snapshot().route[3].instruction, 'Use north exit')
+  assert.equal(tripStatus(s.tracker, s.now()).instruction, 'Board Blue Line')
+  assert.throws(() => parseRoute('A | 0 | Board | transfer\nB | 12'))
+  assert.throws(() => parseRoute('A\nB | 12 | Exit | transfer'))
+  assert.throws(() => parseRoute('A\nB | 12 | Exit | typo'))
+  assert.throws(() => parseRoute(`A\nB | 12 | ${'x'.repeat(161)}`))
+})
+
+test('ordinary stops loop automatically, transfers wait for boarding tap, and destination keeps exit directions', () => {
+  const s = session(demoSettings, true, transferRoute)
+  const arrive = () => {
+    s.feed(12000); s.motion(800); s.feed(1000)
+    assert.equal(s.tracker.state, 'candidate')
+    assert.equal(tripStatus(s.tracker, s.now()).instruction, null)
+    s.feed(s.tracker.candidateUntil - s.now() + 20)
+  }
+  s.depart()
+  assert.equal(s.tracker.currentInstruction, null)
+  arrive()
+  assert.equal(s.tracker.stationIndex, 1)
+  assert.equal(s.tracker.state, 'waiting-departure')
+  assert.equal(s.tracker.currentInstruction, 'Stay on Blue Line')
+  s.motion(2000)
+  assert.equal(s.tracker.state, 'travelling')
+  assert.equal(s.tracker.currentInstruction, null)
+  arrive()
+  assert.equal(s.tracker.stationIndex, 2)
+  assert.equal(s.tracker.state, 'waiting-boarding')
+  assert.equal(s.tracker.sensing, false)
+  const view = tripStatus(s.tracker, s.now())
+  assert.match(view.glassesText, /Change to Green Line/)
+  assert.match(view.timing, /Board next train, then tap/)
+  assert.ok(!view.timing.includes('unavailable'))
+  s.motion(30000)
+  s.tracker.tick(s.now())
+  s.tracker.manualDeparture(s.now())
+  s.tracker.suspend(s.now(), 'Foreground resume during transfer')
+  assert.equal(s.tracker.state, 'waiting-boarding')
+  assert.equal(s.tracker.departureAt, null)
+  assert.equal(s.tracker.currentInstruction, 'Change to Green Line')
+  assert.throws(() => s.tracker.load(parseRoute('A\nB | 12'), demoSettings, s.now()))
+  s.tracker.arm(s.now())
+  assert.equal(s.tracker.state, 'waiting-departure')
+  assert.equal(s.tracker.departureAt, null)
+  assert.equal(s.tracker.currentInstruction, 'Change to Green Line')
+  s.motion(2000)
+  assert.equal(s.tracker.state, 'travelling')
+  assert.equal(s.tracker.currentInstruction, null)
+  arrive()
+  assert.equal(s.tracker.stationIndex, 3)
+  assert.equal(s.tracker.state, 'complete')
+  assert.equal(s.tracker.currentInstruction, 'Use north exit')
+  assert.match(tripStatus(s.tracker, s.now()).glassesText, /Use north exit/)
+  s.motion(30000); s.tracker.arm(s.now())
+  assert.equal(s.tracker.state, 'complete')
+  assert.equal(s.tracker.currentInstruction, 'Use north exit')
+  assert.equal(s.tracker.events.filter(e => e.action === 'arrival-counted').length, 3)
+  assert.equal(s.tracker.events.filter(e => e.action === 'station-instruction').length, 4)
+  assert.ok(s.tracker.events.some(e => e.action === 'armed' && e.detail.boardingAfterTransfer))
+})
+
+test('vetoing a transfer proposal does not advance, pause for boarding, or expose its instruction', () => {
+  const s = session(demoSettings, true, 'A\nTransfer | 12 | Board Green | transfer\nEnd | 12 | Exit north')
+  s.tracker.manualDeparture(s.now()); s.feed(12000); s.motion(800); s.feed(1000)
+  assert.equal(s.tracker.state, 'candidate')
+  assert.equal(tripStatus(s.tracker, s.now()).instruction, null)
+  s.tracker.veto(s.now()); s.feed(12000)
+  assert.equal(s.tracker.stationIndex, 0)
+  assert.equal(s.tracker.state, 'arrival-watch')
+  assert.equal(tripStatus(s.tracker, s.now()).instruction, null)
+})
+
+test('station corrections respect transfers and long directions stay complete on the phone', () => {
+  const route = parseRoute(transferRoute)
+  route[2].instruction = 'Follow signs for the Green Line toward the riverside platform. Take the stairs at the end of the concourse, then board the next train.'
+  const s = session(demoSettings, false)
+  s.tracker.load(route, demoSettings, s.now())
+  s.tracker.correct(2, s.now())
+  assert.equal(s.tracker.state, 'waiting-boarding')
+  const view = tripStatus(s.tracker, s.now())
+  assert.equal(view.instruction, route[2].instruction)
+  assert.ok(view.glassesText.includes('...'))
+  assert.ok(view.glassesText.split('\n').length <= 6)
+  s.tracker.correct(3, s.now())
+  assert.equal(s.tracker.state, 'complete')
+  assert.equal(s.tracker.currentInstruction, 'Use north exit')
 })
