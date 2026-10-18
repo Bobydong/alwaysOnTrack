@@ -1,4 +1,5 @@
 import type { GlassesPanel } from './glasses-view.ts'
+import { withPixelIcon } from './glasses-view.ts'
 import type { PlanningSnapshot } from './glasses-planner.ts'
 import type { SpeechSnapshot } from './asr/stt.ts'
 
@@ -14,7 +15,7 @@ function lines(text: string, columns: number, maximum: number) {
   return rows.join('\n')
 }
 
-export function planningView(state: PlanningSnapshot, speech: SpeechSnapshot): GlassesPanel[] {
+function planningPanels(state: PlanningSnapshot, speech: SpeechSnapshot): GlassesPanel[] {
   const box = (id: number, y: number, height: number, content: string, border = false): GlassesPanel => ({
     containerID: id, containerName: `planning-${id}`, xPosition: 12, yPosition: y, width: 552, height,
     paddingLength: 8, borderWidth: border ? 1 : 0, borderColor: border ? 1 : 0, borderRadius: 6, isEventCapture: 0, content,
@@ -45,4 +46,10 @@ export function planningView(state: PlanningSnapshot, speech: SpeechSnapshot): G
   const action = state.phase === 'error' ? 'TAP TO TRY AGAIN' : state.phase === 'prompt' ? 'TAP TO BEGIN RECORDING'
     : state.phase === 'listening' && speech.phase === 'recording' ? 'TAP TO SUBMIT PLAN' : 'Please wait...'
   return [input, box(1, 12, 60, title), box(2, 82, 126, lines(detail, 42, 3)), box(4, 220, 56, action, true)]
+}
+
+export function planningView(state: PlanningSnapshot, speech: SpeechSnapshot): GlassesPanel[] {
+  const kind = state.phase === 'listening' || state.phase === 'prompt' ? 'mic'
+    : state.phase === 'confirm' ? 'check' : 'route'
+  return withPixelIcon(planningPanels(state, speech), kind)
 }

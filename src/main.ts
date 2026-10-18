@@ -1,10 +1,13 @@
-import { waitForEvenAppBridge, TextContainerProperty, CreateStartUpPageContainer,
-  TextContainerUpgrade, RebuildPageContainer, OsEventTypeList, ImuReportPace, type EvenAppBridge } from '@evenrealities/even_hub_sdk'
+import { waitForEvenAppBridge, CreateStartUpPageContainer,
+  TextContainerUpgrade, RebuildPageContainer, ImageRawDataUpdate, ImageRawDataUpdateResult,
+  OsEventTypeList, ImuReportPace, type EvenAppBridge } from '@evenrealities/even_hub_sdk'
 import { axes, combinedCsv, phoneMotionFromEvent, readVector, summarize, type PhoneMotionSample, type Sample, type Mark, type Vector } from './imu-data'
 import { mountDiagnostic, el, renderMotionComparison, renderPlot } from './imu-ui'
 import { StationTracker } from './station-tracker'
 import { mountTripControls } from './trip-ui'
-import { glassesView, glassesLayoutKey } from './glasses-view'
+import { glassesView, glassesLayoutKey, panelSignature, type GlassesPanel } from './glasses-view'
+import { artPng } from './glasses-art'
+import { nativeObjects } from './glasses-native'
 import { LockTest, lockTestStorageKey, readLockTestReport, type LockTestReport } from './lock-test'
 import { lockTestGlasses, mountLockTestControls, renderLockTest } from './lock-test-ui'
 import { GlassesSpeech } from './asr/stt'
@@ -316,11 +319,11 @@ async function initialize() {
   bridge=await waitForEvenAppBridge(); window.clearTimeout(waiting)
   const panels = preparation.panels() ?? glassesView(tracker, stamp())
   const result=await bridge.createStartUpPageContainer(new CreateStartUpPageContainer({
-    containerTotalNum:panels.length,textObject:panels.map(panel => new TextContainerProperty(panel)),
+    ...nativeObjects(panels),
   }))
-  if(result!==0)throw new Error(`Startup page failed (${result}); IMU was not enabled.`)
+  if(result!==0)throw new Error(`Glasses page rejected (${result === 1 ? 'invalid container configuration' : result}). Close and reopen this app after updating.`)
   glassLayout = glassesLayoutKey(panels)
-  for (const panel of panels) glassContents.set(panel.containerID, panel.content)
+  for (const panel of panels.filter(p => !p.graphic)) glassContents.set(panel.containerID, panelSignature(panel))
   unsubscribe=bridge.onEvenHubEvent(event=>{
     if (event.audioEvent) { speech.sendPcm(event.audioEvent.audioPcm); return }
     const sys=event.sysEvent
@@ -353,7 +356,7 @@ async function initialize() {
     sessions.push({t:stamp(),action:`device:${device.connectType}`,pace:pace()})
     status(`Device status: ${device.connectType}. If samples stop, reconnect and use Stop/Start IMU.`)
   })
-  ready=true; controls(); status('G2 page ready. Press Start IMU on the phone, then Start recording.')
+  ready=true; controls(); refreshGlasses(); status('G2 page ready. Tap the glasses to record your trip, or use the phone controls.')
 }
 function displayPhase() {
   if (lockTest.active) return `lock-test:${lockTest.report!.id}`
@@ -365,30 +368,42 @@ function glassesDiagnostic() {
   const latest = history.at(-1)
   return `IMU ${running?'ON':'OFF'} ${recording?'REC':''}\n${axes.map(a=>`${a.toUpperCase()}: ${latest?.[a]?.toFixed(3)??'--'}`).join('  ')}`
 }
+async function uploadGraphics(panels: GlassesPanel[], valid = () => !closed) {
+  for (const panel of panels.filter(p => p.graphic)) {
+    if (!valid()) return
+    const signature = panelSignature(panel)
+    if (glassContents.get(panel.containerID) === signature) continue
+    const result = await bridge!.updateImageRawData(new ImageRawDataUpdate({ containerID: panel.containerID,
+      containerName: panel.containerName, imageData: Array.from(artPng(panel.graphic!)) }))
+    if (!ImageRawDataUpdateResult.isSuccess(result)) throw new Error('Glasses graphic update failed; retrying on the next refresh.')
+    glassContents.set(panel.containerID, signature)
+  }
+}
 function refreshGlasses() {
   if(!bridge || !ready || closed || renderBusy)return
   const now = stamp()
   const panels = lockTest.active ? lockTestGlasses(lockTest.report!, Date.now()) : preparation.panels() ??
     (speech.busy || speech.snapshot().micMayBeOn ? speechGlasses(speech.snapshot()) : glassesView(tracker, now, glassesDiagnostic()))
   const layout = glassesLayoutKey(panels)
-  if(layout === glassLayout && panels.every(panel => glassContents.get(panel.containerID) === panel.content))return
+  if(layout === glassLayout && panels.every(panel => glassContents.get(panel.containerID) === panelSignature(panel)))return
   const phaseAtSend = displayPhase()
   renderBusy=true
   const update = async () => {
     if (layout !== glassLayout) {
       const ok = await bridge!.rebuildPageContainer(new RebuildPageContainer({
-        containerTotalNum: panels.length, textObject: panels.map(p => new TextContainerProperty(p)),
+        ...nativeObjects(panels),
       }))
       if (displayPhase() === phaseAtSend) lockTest.bridgeResult(ok, Date.now(), document.hidden)
       if (!ok) throw new Error('Glasses layout update failed; retrying on the next refresh.')
       glassLayout = layout
       glassContents.clear()
-      for (const p of panels) glassContents.set(p.containerID, p.content)
+      for (const p of panels.filter(p => !p.graphic)) glassContents.set(p.containerID, panelSignature(p))
+      await uploadGraphics(panels, () => !closed && displayPhase() === phaseAtSend)
       return
     }
     // Send the tap action/deadline first; extra framing updates must not delay it.
     const priority = ['trip-action', 'trip-station', 'trip-detail', 'trip-header', 'trip-progress']
-    for (const panel of [...panels].sort((a, b) => priority.indexOf(a.containerName) - priority.indexOf(b.containerName))) {
+    for (const panel of panels.filter(p => !p.graphic).sort((a, b) => priority.indexOf(a.containerName) - priority.indexOf(b.containerName))) {
       if (closed) return
       // Discard unsent content as soon as the tracker changes phase.
       if (displayPhase() !== phaseAtSend) return
@@ -397,6 +412,7 @@ function refreshGlasses() {
       if (displayPhase() === phaseAtSend) lockTest.bridgeResult(ok, Date.now(), document.hidden)
       if (ok) glassContents.set(panel.containerID, panel.content)
     }
+    await uploadGraphics(panels, () => !closed && displayPhase() === phaseAtSend)
   }
   void update().catch(error => { if (displayPhase() === phaseAtSend) lockTest.bridgeResult(false, Date.now(), document.hidden); console.error(error) }).finally(()=>{
       renderBusy=false
