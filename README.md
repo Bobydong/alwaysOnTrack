@@ -315,9 +315,11 @@ Automated tests cover detector transitions, schedule matching, provider contract
 
 ### Wireless and deployment status
 
-The documented local hardware path uses USB forwarding. A wireless setup would need a backend reachable from the phone over trusted HTTPS, correct origin/permission configuration, and validation of motion access in the Even app. Hosting only `dist/` or installing an `.ehpk` does not provide the Node backend.
+For an installed private beta with the full AI pipeline, follow [Even Hub beta setup](docs/evenhub-beta.md). The laptop can use your phone's hotspot and run the backend behind an HTTPS tunnel. `beta:configure`, `beta:pack`, and `beta:serve` configure the remote API, generate a matching network whitelist/package, and run a token-protected API-only backend. Physical beta validation of microphone and phone motion is still required.
 
-The manifest currently permits `http://localhost:5173` and retains a template package ID. A distributable build needs its own identity and a configured backend origin/network whitelist. This repository does not yet provide a turnkey hosted service or production installation flow.
+To remove the laptop dependency, a Free Render deployment configuration and local resource preflight are available. See [Render hosting checks and setup](docs/render-hosting.md) for measured memory use, deployment secrets, and free-tier cold-start limits. A real Render deployment must still be checked before using it for a demo.
+
+The ordinary development manifest permits `http://localhost:5173` and retains a template package ID; the beta script writes a separate manifest in `release/`. Hosting only `dist/` or installing an `.ehpk` does not provide the Node backend. Beta upload/invitations still take place in your developer account. This shared-token beta is intended for invited demo testers, not public production distribution.
 
 ## Troubleshooting
 

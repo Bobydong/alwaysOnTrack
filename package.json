@@ -11,6 +11,13 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "pack": "npm run build && evenhub pack app.json dist",
+    "beta:configure": "node scripts/configure-beta.mjs",
+    "beta:serve": "node --env-file-if-exists=.env.local server/beta.mjs",
+    "beta:check": "node scripts/check-beta.mjs",
+    "beta:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-beta.ps1",
+    "beta:pack": "node scripts/pack-beta.mjs",
+    "render:serve": "node --max-old-space-size=320 --env-file-if-exists=.env.local server/render.mjs",
+    "render:check": "node scripts/render-preflight.mjs",
     "simulate": "evenhub-simulator http://localhost:5173"
   },
   "dependencies": {

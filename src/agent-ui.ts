@@ -1,4 +1,5 @@
 import type { GlassesSpeech } from './asr/stt.ts'
+import { companionFetch } from './companion.ts'
 import { parseTripPlan, type TripPlan } from './trip-plan.ts'
 
 export function mountAgentControls(root: HTMLElement, showRoutes: (plans: TripPlan[], recommendedId: string | null) => void,
@@ -29,7 +30,7 @@ export function mountAgentControls(root: HTMLElement, showRoutes: (plans: TripPl
     messages.push({ role, text })
     const item = document.createElement('li'); item.textContent = `${role === 'user' ? 'You' : 'Agent'}: ${text}`; log.append(item)
   }
-  fetch('/api/agent/status').then(r => r.json()).then(data => {
+  companionFetch('/api/agent/status').then(r => r.json()).then(data => {
     const provider = data.provider === 'groq' ? 'Groq' : 'Gemini'
     find('agent-readiness').textContent = data.configured ? `${provider} configured (${data.model}).` : `Add ${data.provider === 'groq' ? 'GROQ_API_KEY' : 'GEMINI_API_KEY'} to .env.local on the laptop, then restart the server. Manual route search below still works.`
   }).catch(() => { find('agent-readiness').textContent = 'Agent service unavailable. Use the companion backend or manual route search below.' })
@@ -51,7 +52,7 @@ export function mountAgentControls(root: HTMLElement, showRoutes: (plans: TripPl
     const outgoing = [...messages.slice(-10), { role: 'user' as const, text: input.value.trim() }]
     planning = true; controls(); status.textContent = 'Resolving your request and checking subway routes...'; showRoutes([], null)
     try {
-      const response = await fetch('/api/agent/turn', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const response = await companionFetch('/api/agent/turn', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: outgoing }), signal: AbortSignal.timeout(90000) })
       const data = await response.json()
       if (!response.ok) throw new Error([data.error || 'Trip planning failed.', ...(data.rejected || [])].join(' '))

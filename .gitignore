@@ -4,3 +4,5 @@ dist/
 .env.*.local
 data/mta-subway.json
 data/*.zip
+release/
+.tools/

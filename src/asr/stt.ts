@@ -1,3 +1,5 @@
+import { companionFetch } from '../companion.ts'
+
 export const speechLimitSeconds = 30
 export function pcmToWav(chunks: Uint8Array[]) {
   const size = chunks.reduce((n, b) => n + b.length, 0)
@@ -32,7 +34,7 @@ export class GlassesSpeech {
   private closing: Promise<void> | undefined
   private microphone: (open: boolean) => Promise<boolean>
   private fetchImpl: typeof fetch
-  constructor(microphone: (open: boolean) => Promise<boolean>, fetchImpl: typeof fetch = fetch) {
+  constructor(microphone: (open: boolean) => Promise<boolean>, fetchImpl: typeof fetch = companionFetch) {
     this.microphone = microphone
     // WebView fetch requires Window as its receiver, not this speech controller.
     this.fetchImpl = fetchImpl.bind(globalThis)

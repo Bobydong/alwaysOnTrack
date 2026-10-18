@@ -1,4 +1,5 @@
 import type { GlassesSpeech } from './asr/stt.ts'
+import { companionFetch } from './companion.ts'
 import { parseTripPlan, type TripPlan } from './trip-plan.ts'
 
 export type PlanningPhase = 'prompt' | 'listening' | 'understanding' | 'choose-origin' | 'choose-destination' | 'confirm' | 'planning' | 'loaded' | 'error'
@@ -23,7 +24,7 @@ export class GlassesPlanner {
   private revision = 0
   private abort: AbortController | undefined
   private resolutionId = ''
-  constructor(speech: GlassesSpeech, load: (plan: TripPlan) => void | Promise<void>, fetchImpl: typeof fetch = fetch) {
+  constructor(speech: GlassesSpeech, load: (plan: TripPlan) => void | Promise<void>, fetchImpl: typeof fetch = companionFetch) {
     this.speech = speech; this.load = load; this.fetchImpl = fetchImpl.bind(globalThis)
     speech.subscribe(s => {
       if (this.state.phase !== 'listening') return

@@ -1,4 +1,5 @@
 import { parseTripPlan, type TripPlan } from './trip-plan.ts'
+import { companionFetch } from './companion.ts'
 import { mountAgentControls } from './agent-ui.ts'
 import type { GlassesSpeech } from './asr/stt.ts'
 
@@ -54,7 +55,7 @@ export function mountPlannerControls(root: HTMLElement, load: (plan: TripPlan, o
     }
   }
   mountAgentControls(find('trip-agent'), showRoutes, value => setBusy('agent', value), speech)
-  fetch('/api/trips/status').then(r => r.ok ? r.json() : null).then(config => {
+  companionFetch('/api/trips/status').then(r => r.ok ? r.json() : null).then(config => {
     status.textContent = !config ? 'Route service unavailable. Start the companion backend.'
       : !config.configured ? 'Add GOOGLE_MAPS_API_KEY to .env.local on the laptop and restart the server.'
         : !config.catalogAvailable ? 'Run npm run gtfs:import to load MTA schedules.' : `Route service ready. MTA schedule imported ${config.scheduleFetchedAt}.`
@@ -69,7 +70,7 @@ export function mountPlannerControls(root: HTMLElement, load: (plan: TripPlan, o
     if (!origin || !destination) { status.textContent = 'Enter both an origin and a destination.'; return }
     setBusy('manual', true); results.replaceChildren(); status.textContent = 'Finding routes and matching MTA stops...'
     try {
-      const response = await fetch('/api/trips/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const response = await companionFetch('/api/trips/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ origin, destination }), signal: AbortSignal.timeout(45000) })
       const data = await response.json()
       if (!response.ok) throw new Error([data.error || `Route service returned ${response.status}`, ...(data.rejected || [])].join(' '))

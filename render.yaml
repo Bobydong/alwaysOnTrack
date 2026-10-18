@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: alwaysontrack-api
+    runtime: node
+    plan: free
+    autoDeployTrigger: 'off'
+    buildCommand: npm ci && npm run gtfs:import
+    startCommand: npm run render:serve
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 24.22.0
+      - key: MTA_GTFS_CATALOG
+        value: data/mta-subway.json
+      - key: AI_PROVIDER
+        value: groq
+      - key: GROQ_STT_MODEL
+        value: whisper-large-v3-turbo
+      - key: GROQ_AGENT_MODEL
+        value: openai/gpt-oss-120b
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DEMO_ACCESS_TOKEN
+        sync: false

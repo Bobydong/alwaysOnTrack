@@ -1,11 +1,12 @@
-import { ApiError, apiFailure, readBody, readJson, reply, sameOrigin } from './http.mjs'
+import { ApiError, apiFailure, readBody, readJson, reply } from './http.mjs'
 import { defaultGeminiModel, geminiClient, transcribeSpeech } from './gemini.mjs'
 import { runTripAgent } from './trip-agent.mjs'
 import { understandTrip, planConfirmedTrip } from './glasses-planning.mjs'
 import { defaultGroqAgentModel, defaultGroqSttModel, groqClient, groqTranscriber } from './groq.mjs'
+import { demoAccess } from './demo-access.mjs'
 
 export function agentApi({ provider = 'gemini', apiKey, model = provider === 'groq' ? defaultGroqAgentModel : defaultGeminiModel,
-  sttModel = defaultGroqSttModel, planner, fetchImpl = fetch }) {
+  sttModel = defaultGroqSttModel, planner, fetchImpl = fetch, authorize = demoAccess().authorize }) {
   if (!['groq', 'gemini'].includes(provider)) throw new Error('Unsupported AI provider.')
   const generate = (provider === 'groq' ? groqClient : geminiClient)({ apiKey, model, fetchImpl })
   const transcribe = provider === 'groq' ? groqTranscriber({ apiKey, model: sttModel, fetchImpl }) : bytes => transcribeSpeech(generate, bytes)
@@ -15,12 +16,12 @@ export function agentApi({ provider = 'gemini', apiKey, model = provider === 'gr
     if (!['/api/agent/status', '/api/agent/turn', '/api/agent/intent', '/api/agent/plan-confirmed', '/api/speech/transcribe'].includes(pathname)) return next()
     let acquired = false
     try {
+      authorize(req)
       if (pathname === '/api/agent/status') {
         if (req.method !== 'GET') throw new ApiError(405, 'GET required.')
         return reply(res, 200, { provider, configured: !!apiKey, model, sttModel: provider === 'groq' ? sttModel : model })
       }
       if (req.method !== 'POST') throw new ApiError(405, 'POST required.')
-      sameOrigin(req)
       if (!apiKey) throw new ApiError(503, `Add ${provider === 'groq' ? 'GROQ_API_KEY' : 'GEMINI_API_KEY'} to .env.local on the laptop and restart the server.`)
       if (pending >= 2) throw new ApiError(429, 'A voice or planning request is already running. Try again shortly.')
       pending++; acquired = true
