@@ -1,0 +1,39 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Mobile UI check</title></head><body>
+<pre id="result">RUNNING</pre><iframe id="app-frame" src="/?demo=1" style="width:390px;height:900px;border:0"></iframe>
+<script>
+const result = document.getElementById('result'), frame = document.getElementById('app-frame');
+if (new URLSearchParams(location.search).has('screenshot')) {
+ result.hidden = true; document.body.style.margin = '0'; frame.style.cssText = 'position:absolute;top:0;left:0;width:390px;height:1000px;border:0';
+}
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+function check(value, message) { if (!value) throw new Error(message); }
+frame.onload = async () => {
+ try {
+  const doc = frame.contentDocument, app = frame.contentWindow;
+  for (let n = 0; n < 50 && !doc.getElementById('mobile-view'); n++) await pause(100);
+  const el = id => doc.getElementById(id);
+  check(el('mobile-view') && !el('mobile-view').hidden && el('lab-view').hidden, 'Mobile must be default');
+  check(doc.documentElement.scrollWidth <= 390, 'Mobile must fit phone width');
+  for (const id of ['mobile-open-lab','mobile-glasses','mobile-primary','mobile-enable-motion']) check(el(id).getBoundingClientRect().right <= 390, 'Control clipped: '+id);
+  const started = app.performance.timeOrigin;
+  el('mobile-open-lab').click(); check(el('mobile-view').hidden && !el('lab-view').hidden, 'Lab switch');
+  check(app.location.search.includes('view=lab'), 'Lab URL fallback');
+  el('lab-open-mobile').click(); check(!el('mobile-view').hidden && el('lab-view').hidden, 'Return to mobile');
+  check(started === app.performance.timeOrigin, 'View switches must preserve the runtime');
+  doc.querySelector('.mobile-tools').open = true;
+  el('mobile-demo-route').click(); await pause(100);
+  check(el('mobile-title').textContent === 'Ready to board', 'Demo route must load into boarding');
+  check(el('mobile-glasses').textContent.includes('BOARD AT'), 'Preview must match boarding');
+  check(el('mobile-sync').textContent === 'Preview only', 'Browser must not claim a glasses connection');
+  el('mobile-station').value = '1'; el('mobile-correct').click(); await pause(100);
+  check(el('mobile-title').textContent === 'Board the next train', 'Transfer guidance');
+  el('mobile-station').value = '2'; await pause(700);
+  check(el('mobile-station').value === '2', 'Refresh must preserve an unapplied station selection');
+  el('mobile-new-trip').click(); await pause(100);
+  check(el('mobile-title').textContent === 'Where are we going?', 'New trip must restore the prompt');
+  check(el('mobile-remaining').hidden, 'Old route summary must be hidden');
+  check(doc.documentElement.scrollWidth <= 390, 'Recovery state must fit phone width');
+  result.textContent = 'PASS: mobile default, Lab fallback, no reload, demo load, live preview, transfer, correction selection, new trip, phone width';
+ } catch (error) { result.textContent = 'FAIL: ' + error.message; }
+};
+</script></body></html>

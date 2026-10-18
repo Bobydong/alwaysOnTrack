@@ -1,162 +1,377 @@
-# AlwaysOnTrack: G2 subway companion prototype
+# AlwaysOnTrack
 
-An Even Hub G2 and Android phone prototype for route-aware subway station prompts. It combines a phone-motion station counter, Google Routes + MTA schedule matching, and a trip-planning agent with short G2 microphone recordings for speech input. Groq provides Whisper Large V3 Turbo transcription and GPT-OSS 120B intent/tool calling; Gemini remains an optional provider. Manual route search and itinerary import remain available. Route preparation needs internet; tracking runs on the phone.
+**A glasses-first NYC subway companion for Even Realities G2 and an Android phone.** Tell it where you are and where you want to go, confirm the places it understood, and receive boarding, station, transfer, and arrival prompts on the glasses.
 
-## Project status
+AlwaysOnTrack combines speech recognition and an AI trip-planning agent with Google Maps routing, MTA subway schedules, and an experimental phone-motion station counter. The display stays quiet while riding: a small station rail shows the last stop, next stop, ride endpoint, and stops remaining until your transfer or destination.
 
-The current hackathon demo flow is working on the developer's G2 and Android test setup. The station counter can follow a sequence of named stops, detect a simulated departure and a braking-like arrival, ask the rider to veto a proposed arrival, and advance to the next stop. The timing and thresholds are exposed in the short demo preset. This is a prototype for testing the interaction and motion rules; its thresholds have not been validated on real train journeys.
+This repository is a working hackathon MVP, developed and tested with physical G2 glasses and an Android phone. It also includes a minimal mobile dashboard, a glasses-layout preview, and the original diagnostic dashboard for sensor experiments and manual recovery.
 
-Completed in the current prototype:
+## What it does
 
-- Glasses-first speech planning: tap to record, tap to submit, review understood From/To locations, scroll between Yes/No and tap to confirm. Yes automatically plans and loads a verified Google/MTA itinerary into the boarding screen; No returns to recording. Phone search/import remains available. Live speech/planning has been tested; the new scroll confirmation flow still needs a physical G2 check.
-- Spoken landmarks resolve through Google Places API (New) before confirmation. Multiple matches can be scrolled and selected on the glasses; confirmation includes names and street addresses. Routes receives the selected server-verified place IDs. Places API access must be enabled for the Google key.
-- An optional 12-second-per-stop demo timing override for generated plans. Original provider schedules remain in the prepared itinerary and export; the tracker identifies simulated timing separately.
-- G2 IMU exploration with live X/Y/Z values, plots, summary statistics, movement labels, and JSON/CSV export.
-- Optional Android phone motion capture and side-by-side comparison with G2 readings.
-- A route editor for entering the current stop, later stops, and expected time between each pair. The app assumes the rider starts at the first listed stop.
-- Optional station instructions for boarding, staying on a train, transferring, and exiting. Full text appears on the phone, with a short version on the glasses. Instructions persist until the next departure; destination instructions stay visible.
-- One tracking loop per train ride: ordinary stops continue automatically; confirmed transfer arrivals pause detection until the rider boards the next train and taps again. Walking between trains cannot start a segment timer.
-- Tap-to-start tracking, phone-motion departure detection, and a segment timer that opens arrival detection after `floor(90% × segment duration)`.
-- Arrival proposals based on phone acceleration, followed by a correction countdown. Phone movement during that countdown does not cancel the proposal; a single tap vetoes it. Missing phone sensor samples cancel it because the app cannot confirm tracking continued.
-- Glasses and phone status messages for blocked detection, arrival watching, proposed arrivals, veto cooldowns, departure waiting, and trip completion.
-- A quiet G2 riding layout with a right-side moving stop window: last stop, next stop, the ride endpoint, and stops remaining. Labels align close to the rail; only the last-station marker is filled. Small pixel graphics mark boarding/transfer/exit/voice states. Detection and correction status stays at bottom left. Physical font, image rendering, and overflow checks remain pending.
-- Manual station correction and manual departure controls for recovering during a demo.
-- Timestamped detector events and current route/state/settings in the JSON export.
-- Versioned prepared-trip JSON: ordered walking/train legs, line/headsign, intermediate stations, per-station schedule estimates, and source provenance. JSON can be imported and loaded into the existing transfer loop.
-- Google Routes backend and MTA supplemented GTFS importer. The planner resolves intermediate stops against active MTA schedules and rejects unresolved/ambiguous alternatives. Google credentials stay on the server. Live Google validation requires local API-key setup; automated routing checks use synthetic fixtures.
+1. **Listen:** tap the glasses and say both your starting location and destination. Tap again to submit.
+2. **Understand:** transcribe the recording, extract the two locations, and resolve names and landmarks through Google Places.
+3. **Confirm:** select between matching places when necessary, then review the origin and destination on the glasses. Scroll between Yes and No; tap to select.
+4. **Plan:** request subway routes from Google Routes and expand each train ride into an ordered station list using MTA schedules. Load a route only when its station sequence can be resolved.
+5. **Board:** show the boarding station, train line, and direction. Tap once aboard to arm tracking.
+6. **Track:** detect departure using the phone's acceleration, wait through most of the expected segment time, then watch for motion followed by quiet that could indicate arrival.
+7. **Correct:** immediately show the proposed station and updated directions, with time to tap if you are not at that station.
+8. **Transfer or finish:** at a transfer, board the next train and tap to restart the ride loop. At the final station, show arrival and general exit-sign guidance.
 
-Still to do or validate:
+Typed route search, prepared-trip JSON import/export, a built-in NYC demonstration, and manual station correction are available as alternatives to speech planning.
 
-- Physical G2 validation of the new full-screen preparation flow, Yes/No scrolling, text fit, retry behavior, and transition into the corner boarding layout. Gemini access, speech/planning, and Google/MTA integration have been checked; each demo route still needs review.
-- Automatic sourcing and verification of platform and exit details. Preset directions are fictional examples; planned itineraries currently use line/headsign and general exit-sign guidance. The local transfer loop has been tested on G2; externally planned journeys still need a live check.
-- More motion recordings and threshold tuning, especially tests that compare ordinary seated movement with train departure and braking. The user reports the current demo transition works well; real-train reliability has not been established.
-- Reliable screen-lock/background sensing is outside this MVP. The lock test kept JavaScript and glasses communication running but lost phone acceleration. Keep the page visible and the phone screen on during the five-minute demo; no native Android companion or wake-lock feature is included.
-- Any use of G2 IMU data to improve detection. The glasses IMU is captured for diagnostics and comparison only; it does not affect departure or arrival decisions.
+## How the pieces fit together
 
-## Run with your phone and G2
+| Component | Responsibility |
+| --- | --- |
+| G2 glasses | Microphone input, taps/scrolls, and the rider-facing display. |
+| Android phone / Even app | Runs the web application, connects to G2 through the Even SDK, and supplies phone motion events. |
+| Local Node server | Keeps API credentials off the client; handles speech, agent requests, place lookup, routing, and schedule matching. Vite provides this backend during development. |
+| Groq, the default AI provider | Whisper transcription and an agent that extracts trip intent and recommends among resolved routes. |
+| Google Places API (New) | Resolves spoken locations into names, addresses, and place IDs. |
+| Google Routes API | Supplies transit alternatives, train endpoints, line/direction information, and reported stop counts. |
+| Local MTA GTFS catalog | Supplies intermediate stations and scheduled inter-station travel times needed by the tracker. |
 
-1. Install/use a compatible Node version (the installed SDK requires Node 20 or 22+). Run `npm install` if dependencies are not present.
-2. Pair the G2 through the Even app.
-3. For Android phone-motion access, enable USB debugging on the phone, connect it to the laptop by USB, and accept the phone's debugging prompt. Run `npm run dev:phone` once; it discovers `adb` and forwards device port 5173 to the laptop's Vite server. (Android platform-tools must be installed.)
-4. Run `npm run dev` in one terminal. In another run `npx evenhub qr --url http://localhost:5173` and open it using the Even app development flow. The `localhost` URL is important: LAN HTTP addresses such as `http://192.168…` are not secure contexts, so Android may block motion sensors. A normal phone browser cannot access the G2 bridge.
-5. If using the LAN QR instead, connect both devices to Wi-Fi and expect Android phone motion to be unavailable unless you serve over trusted HTTPS. The G2 connection may still work. For LAN connection problems, check the laptop firewall and Wi-Fi client isolation.
-6. In the phone dashboard press **Start IMU**, then **Start recording**. Look for actual X/Y/Z values and the measured receipt rate.
-7. Choose a movement label before each experiment. Label changes add a marker while recording. **Tap the glasses** to add a timestamped marker without using the phone. **Double-tap** opens system exit confirmation.
-8. Stop recording and export JSON and/or CSV before closing/reloading. Stop IMU when finished.
+The AI does not invent station sequences or make live arrival decisions. Route matching and motion tracking use application code. **G2 IMU readings are available for diagnostics but do not drive station counting.**
 
-On this machine an installed Node binary was found at:
-`C:\Users\bryan\AppData\Local\Author Software\nvm\installs\v24.22.0\node.exe`
-If the node/npm shims say no active version is configured, activate your installed version in nvm. The implementation was checked using that binary directly.
+The USB cable in the setup below forwards the phone's localhost requests to the laptop. The glasses remain paired with the phone through the Even app. There is no separate native Android companion app in this repository.
 
-## Online route preparation
+## Requirements
 
-For voice and conversational planning, see [AI setup and demo flow](docs/voice-agent.md). Set `AI_PROVIDER=groq` and `GROQ_API_KEY` in `.env.local`, then restart the server. Use `AI_PROVIDER=gemini` to select the previous Gemini integration. Manual Google/MTA search works without an AI key.
+### Hardware and software
 
-1. Set `GOOGLE_MAPS_API_KEY` in `.env.local` on the laptop. Enable Routes API and billing for the key. Never use a `VITE_` prefix for this secret.
-2. Run `npm run gtfs:import` to import the official MTA supplemented subway schedules. If downloading fails, download the supplemented ZIP from [MTA developer resources](https://www.mta.info/developers) and run `npm run gtfs:import -- "path/to/feed.zip"`.
-3. Restart Vite. Open **Plan a NYC subway journey** in the route panel, enter origin and destination, and press **Find subway routes**.
-4. Choose **Load this itinerary**. Board at its first train station and tap the glasses. Walking links and transfers are retained in the full plan; walking to a new boarding station does not create a false station count.
+- Even Realities **G2 glasses**, paired and working in the Even Realities Android app.
+- An **Android phone** whose Even app WebView exposes usable gravity-removed device acceleration. iOS has not been validated for this project.
+- A laptop or desktop with **Node.js 24**, npm, and this repository. Use Node 24 for the backend and tests, which import TypeScript source directly.
+- [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools), including `adb`.
+- A USB cable that supports data, with USB debugging enabled on the phone.
+- Access to the Even app's developer loading flow. See the official [Even Hub developer setup](https://hub.evenrealities.com/docs/getting-started/installation) and [Even Hub support guide](https://support.evenrealities.com/hc/en-us/articles/15688149217167-Even-Hub) for registration and app-side access.
 
-Google supplies train endpoints and stop counts; MTA schedules supply the actual intermediate stations and expected travel times. Unresolved routes are rejected. Specific exits/platform paths are not inferred. Plans are currently in page memory; export before reloading.
+The walkthrough uses Windows PowerShell. On macOS/Linux, use the equivalent file-copy command and run `adb reverse` directly instead of the Windows helper script.
 
-See [prepared-trip format and routing setup](docs/routing.md) for the API contract, matching rules, limits, JSON import/export, and standalone server deployment. `npm run build` then `npm start` serves the built app and planner backend on port 5173; static hosting alone does not include the route service.
+### Choose a setup path
 
-## Experimental station counting
+| Goal | API keys | MTA import | Physical hardware |
+| --- | --- | --- | --- |
+| Inspect the mobile UI and built-in demo in a desktop browser | None | Not needed | Not needed; glasses connection and real phone sensing are unavailable. |
+| Demonstrate station tracking on your phone and G2 using the built-in route | None | Not needed | Android + G2 required. |
+| Use typed Google/MTA route search | Google Maps | Required | Optional for planning; required for the complete glasses experience. |
+| Use the complete spoken trip-planning experience | Google Maps + Groq, or the optional Gemini provider | Required | Android + G2 required for glasses microphone input. |
 
-Enable phone motion over Android localhost/USB forwarding, then use the new station-counter panel:
+Internet is required for dependency installation, downloading schedules, and online trip preparation. Once loaded, the route and detection logic live in the phone page; tracking does not request a provider on every stop. This is not a fully packaged offline application.
 
-On launch, the glasses show the spoken-trip prompt. The optional NYC demo is available on the phone: **Times Sq-42 St (N) → 34 St-Herald Sq (transfer to F) → 23 St → 14 St**. Select the preset and load the route explicitly. It uses simulated 12-second segments (arrival sensing opens after 10 seconds) and makes no Google request. It is not a verified live itinerary.
+## 1. Install the project
 
-1. Choose the three-minute example itinerary or the **Short demo with transfer (12-second segments)**. Both have a starting station, an ordinary stop, a transfer station, and a destination. Edit names, durations, and instructions as needed. Use `station name | travel seconds from previous station | optional instruction | transfer`; the last field is only for intermediate stops where you change trains. The starting station uses 0 seconds. Old two-field routes still work. Press **Load route, then tap glasses to start**.
-2. **Board the first train and single-tap the glasses to begin tracking**, or press **Start tracking (or tap glasses)** on the phone. Motion does not start tracking before your tap. Arming starts raw recording automatically; the travel timer waits for departure motion. Keep the phone secured in one position and the page in the foreground. G2 IMU can also be started for comparison; its readings do not control the station count.
-3. Sustained phone linear acceleration starts the segment timer. **Mark departure now** is an explicit recovery option if the detector misses your departure.
-4. Arrival inputs remain blocked until `floor(90% × expected segment duration)` after departure. A 12-second demo segment opens at 10 seconds. Both screens show **Arrival inputs blocked / Detection opens in ...** until that gate opens, then **Arrival detection OPEN / waiting for jolt**. This countdown measures the input-block period. The expected time may pass without advancing the station.
-5. After the window opens, a coherent **jolt**, a settling interval, and quiet dwell produces a proposed arrival. Recoil is not required. The demo requires a 250 ms mean of at least 0.35 m/s² for 0.4 seconds, allows 0.3 seconds to settle after the detected jolt, then checks for 0.25 seconds at or below 0.25 m/s². Normal settings use 0.5 seconds to settle and 3 seconds of quiet. The proposal stays on the glasses for an adjustable correction window (8 seconds normally, 6 seconds in demo). Single-tap the glasses or press **Not at station** to cancel. Phone motion during the correction window does not cancel the proposal, allowing for the rider shifting in their seat. A sensor gap cancels the proposal and requires a new jolt. The next-station, transfer, or exit screen appears immediately when an arrival is detected; tapping Not at station restores the previous view.
-6. Successful expiry advances the current station once and shows its instruction. At an ordinary stop, the app waits for departure and continues automatically. At a transfer stop, it shows **Transfer: tracking paused** and ignores detector input until you board the next train and tap. That tap arms departure detection; it does not start the timer itself. At the destination, tracking ends and the exit instruction remains visible. Use **Set current station** to fix a missed/extra count; corrections respect transfer markers. If already aboard and armed, **Mark departure now** can recover a missed departure. An explicit veto enters a 10-second cooldown and requires fresh arrival evidence afterward.
-7. Stop recording and export **JSON** for raw streams plus the `tripTracking` route, settings, state and timestamped evidence/event log. CSV retains only sensor samples. **Stop tracking** stops the counter but leaves diagnostic recording running until you stop it. Clearing the diagnostic recording does not clear the trip log; reload only after exporting.
+Clone or download this repository and open a terminal in its root directory. Then run:
 
-Example manual itinerary (fictional directions):
-
-```text
-Start station | 0 | Board the Blue Line
-Second station | 12 | Stay on this train
-Transfer station | 12 | Change to the Green Line | transfer
-Destination | 12 | Use the north exit
+```powershell
+node --version
+npm ci
+Copy-Item .env.example .env.local
 ```
 
-Only the explicit `transfer` marker pauses for another boarding tap. Instruction text alone does not change tracking behavior. Each instruction may contain up to 160 characters; avoid `|` within the text because it separates fields. The phone retains the full instruction; the glasses show at most three short instruction lines, with an ellipsis when needed. Route instructions, transfer markers, instruction-display events, and the current instruction are included in JSON exports.
+`node --version` should report Node 24.x. If `.env.local` already exists, preserve its values instead of copying over it.
 
-Departure has its own settings: a 500 ms average of phone gravity-removed acceleration magnitude, a 0.35 m/s² threshold sustained for 0.7 seconds, and direction consistency of at least 0.50. Both presets use these original departure settings. Normal braking defaults also use a 500 ms window, a 0.35 m/s² threshold held for 0.8 seconds, and a 0.18 m/s² quiet threshold held for 3 seconds. Short demo **braking** uses a 250 ms window, a 0.35 m/s² threshold held for 0.4 seconds, a 0.25 m/s² quiet threshold held for 0.25 seconds, and a six-second veto. Direction consistency is the magnitude of the average vector divided by the average vector magnitude; alternating vibration tends to cancel. Settings are adjustable under the timing/detection controls, with separate departure and braking fields. Braking-like motion followed by quiet suggests a possible arrival. Quiet readings cannot distinguish a stopped train from one moving at steady speed; the expected travel time and correction controls remain necessary. No glasses-based noise cancellation or calibrated confidence is claimed.
+For the no-key demo, you can leave credentials blank and skip to **Connect your Android phone and G2**. For real route planning, complete the next two sections first.
 
-Either sign on any phone axis can provide the initial jolt. Keep the phone secured relative to your body. Recoil and other settling movements can happen, but no direction reversal is required. Continued motion prevents quiet dwell; a missing sensor stream resets evidence. A jolt that does not settle into quiet expires after the greater of 12 seconds or the configured settling + dwell + 4 seconds. The glasses and phone show the current phase; JSON logs include `braking-jolt`, expiry, and arrival-candidate evidence.
+## 2. Configure speech and routing services
 
-For an end-to-end trial, use the short demo: simulate departure, a jolt before the 10-second gate that should be ignored, a later lean/jolt, then stillness through settling and dwell. Shift the phone during the correction countdown to confirm the proposal remains pending. Repeat with an explicit veto, a delayed arrival, and a second segment. Labels only annotate recordings; changing a label never triggers detection. Missing linear-acceleration channels, sample gaps over 500 ms, and page hiding reset accumulated evidence; missing events never substitute for quiet. Screen-lock/background operation remains unsupported for this experiment.
+Edit `.env.local` on the computer running the server. A full setup using the default Groq provider needs these values:
 
-The pure state machine is covered by `dev/station-tracker.test.mjs`; with Node 24 run `node --test dev/station-tracker.test.mjs`.
+```dotenv
+GOOGLE_MAPS_API_KEY=your_google_maps_key
+MTA_GTFS_CATALOG=data/mta-subway.json
 
-## What the dashboard shows
+AI_PROVIDER=groq
+GROQ_API_KEY=your_groq_key
+GROQ_STT_MODEL=whisper-large-v3-turbo
+GROQ_AGENT_MODEL=openai/gpt-oss-120b
+```
 
-- Three raw G2 SDK channels, X/Y/Z. Units and physical meaning are deliberately unspecified.
-- Optional Android phone `devicemotion` events: acceleration, acceleration including gravity, rotation rate, and browser-reported event interval when available. G2 and phone streams share the WebView receipt clock and are stored separately in the recording.
-- A shared-scale G2 plot of the last 15 seconds, per-axis min/max/mean/standard deviation, and presence counts. Auto scaling can exaggerate very small noise; always read the range/numbers.
-- A comparison plot of G2 vector magnitude and phone linear / gravity-inclusive acceleration magnitude. It compares receipt timing and magnitude, not direction: the devices use different axis frames. Missing browser fields remain null.
-- Measured WebView receipt rate and largest interval within the plot window. P100-P1000 are protocol pacing selections, not asserted Hz. Stop the stream before changing pace.
-- Optional subtraction of a captured two-second mean for visual comparison. This is a display offset, not gravity removal or calibrated acceleration. It never changes raw exports.
-- A live glasses-layout preview. Boarding uses 3 visible containers, tracking/approach 4, and destination 2, plus one empty gesture layer. Writes are serialized, and phase changes discard unsent obsolete content. Detection and tap meanings are unchanged.
-- Explicit stale-stream feedback. After reconnect/resume use Stop/Start if needed; sensor continuity is not assumed.
+These are placeholders, not working credentials. Keep actual keys in `.env.local`, which is ignored by Git. Do not give them a `VITE_` prefix: Vite-prefixed environment variables can be exposed to browser code.
 
-Missing/nonfinite channels remain null in JSON and blank in CSV, not invented zeros. Valid zero values are retained. The SDK may normalize the native payload; these are SDK-delivered channels, not direct access to sensor registers. Phone browser motion events require a secure context in many implementations, may require host permission, and may be missing from this WebView. The normal QR command below serves plain HTTP from the laptop LAN, so Android may withhold phone sensor readings even though the glasses IMU works. The dashboard reports secure-context status and unavailable fields. Foreground events do not establish lock-screen continuity.
+### Google Maps
 
-## Glasses layout
+Create or select a Google Cloud project, configure billing, and enable both:
 
-For screen-off work, use the new **Screen-lock diagnostic** on the phone. It measures phone acceleration, JavaScript execution, glasses bridge writes and taps separately while locked, and saves the report for JSON export. It does not yet enable background tracking. See [the investigation and test procedure](docs/screen-lock.md).
+- **Routes API**, following Google's [Routes setup instructions](https://developers.google.com/maps/documentation/routes/get-api-key).
+- **Places API (New)**, following Google's [Places setup instructions](https://developers.google.com/maps/documentation/places/web-service/get-api-key).
 
-The 576 x 288 riding display concentrates the journey in a narrow rail on the right, leaving the center and most of the left side clear. It shows LAST (the last confirmed or provisionally detected station), NEXT STATION, and GET OFF AT / TRANSFER AT at a fixed lower position. Only LAST has a filled circle; future stops have hollow circles. Dotted rail segments indicate hidden stops between NEXT and the endpoint. At the final hop, NEXT / GET OFF or NEXT / TRANSFER merges the duplicate endpoint labels. Each label/name and the N STOPS LEFT count aligns independently to the rail's left edge. The count reaches the current ride endpoint, so it counts down to a transfer before resetting on the next train.
+Set `GOOGLE_MAPS_API_KEY` to a server-side API key allowed to call these services. If using API restrictions, allow both services. Browser HTTP-referrer restrictions are not appropriate for these backend requests.
 
-Rail labels use fixed rows with 4-pixel internal padding and a 28-pixel line estimate. Text is shortened using browser canvas measurements; native G2 font metrics are unavailable, so physical fit still needs checking. Full station names remain on the phone. Boarding, destination, and bottom-left status retain 10-pixel padding and corner alignment. Custom 24 x 24 pixel icons identify boarding, transfer, exit, microphone, confirmation, and route-preparation states. The rail is two 20 x 112 grayscale PNG tiles to fit the SDK's maximum image height. Text stays native and readable independently of image upload success.
+Places uses the same key by default. To use a different key for place lookup, set `GOOGLE_PLACES_API_KEY` as well.
 
-Boarding shows the station, train/direction, and Tap once aboard. After tapping, train instructions disappear and the stop rail appears. Its window advances when arrival is detected; it does not estimate movement or distance between stations. Transfers immediately preview the next boarding directions, and the destination previews arrival/exit guidance. TAP IF NOT AT [detected station name] and the remaining seconds appear at bottom left during the correction window. A tap restores the previous window/count and starts the existing cooldown. No tap finalizes the arrival after the configured window (currently 20 seconds in both presets), with fresh sensor data still required. Transfer boarding stays disabled until confirmation. A sensor gap also cancels the preview. Detector behavior and internal export names are unchanged.
+### Groq
 
-Live plans use the supplied train destination/headsign for direction; they do not invent uptown/downtown labels or platform/track numbers. Transfer walks use the next train's actual boarding station, which can differ from the station where you got off. Long text is shortened on the glasses; full route instructions remain on the phone. The built-in NYC demo supplies explicit downtown directions.
+Create an API key using the [Groq quickstart](https://console.groq.com/docs/quickstart), then set `GROQ_API_KEY`. The repository defaults to `whisper-large-v3-turbo` for speech and `openai/gpt-oss-120b` for agent work. Your account must have access to the configured models; model names are configurable in `.env.local`.
 
-Close and reopen after updating the app. Geometry changes use `rebuildPageContainer`; same-size text updates use `textContainerUpgrade`, and changed graphics use `updateImageRawData`. Writes are serialized and unchanged graphic payloads are cached so countdown ticks do not repeatedly upload images. Failed graphics retry without blocking microphone startup or native text. One empty text container captures gestures; images do not capture events. Physical G2 checks are still needed for image transfer, font fit, scrollbars, and transition timing.
+### Optional Gemini provider
 
-The phone preview reflects the same rail graphics and native text. [Current illustrative screens](docs/glasses-rail-preview.png) show boarding, a long stop window, the final hop, and a detected arrival. These are approximate font renders, not hardware captures. Relevant checks: `node --test dev/glasses-view.test.mjs dev/station-tracker.test.mjs dev/routing.test.mjs`.
+The backend also supports `AI_PROVIDER=gemini` with `GEMINI_API_KEY` and `GEMINI_MODEL`. Choose a model available to your own account; the value in `.env.example` is configuration, not a guarantee of current provider availability. Gemini is optional when using Groq. There is no automatic provider fallback or retry loop.
 
-## First axis-identification experiment (about five minutes)
+### Usage and costs
 
-1. Label **still**, record ten seconds facing forward. Capture a baseline if useful.
-2. Label **turn head left/right**; rotate left, hold five seconds, return to center, then repeat right. Tap at each transition.
-3. Label **nod up/down**; repeat with looking up/down and holding each pose.
-4. Label **tilt ear to shoulder**; repeat side tilts.
-5. Keep the glasses level and translate forward/back, left/right, then up/down, stopping between motions. Moving the glasses by hand can help isolate translation from rotation. Mark each direction and return.
-6. Repeat a movement facing sideways. Compare which channel changes and whether values stay changed while the pose is held.
-7. Export the JSON and note your phone OS, G2/Even app versions, starting pose, movement order and approximate sizes.
+Google Maps billing is separate from the AI provider's usage. Quotas, model access, and charges depend on your accounts; check their consoles before a demo. Loading the app performs local readiness checks, not a paid trip request. Recording/submitting and planning a trip invoke external services.
 
-A held change during rotation could be orientation or gravity-sensitive acceleration; it is not conclusive. Brief translation spikes may support acceleration, but do not establish units. Do not label an axis train-forward or convert to g/m/s² until measurements justify it. If outputs describe orientation only, this API may not expose the translational acceleration needed for the subway detector.
+The glasses preparation flow normally makes one transcription request, one agent intent request, and two Places searches. Confirming Yes then makes a Routes request and an optional AI recommendation request. Changing the selected place does not repeat its Places search.
 
-For a comparison session, confirm the phone status says secure context before enabling motion. The Android localhost tunnel uses `adb reverse tcp:5173 tcp:5173`; keep USB connected and Vite running. If it still reports an insecure context, verify the URL is exactly `http://localhost:5173` (not the laptop IP) and reload through Even's development flow. If secure context is true but fields stay blank, check Android/WebView motion permission and API support; do not interpret blanks as zero acceleration. Once fields arrive, enable phone motion and start G2 IMU, then begin recording. Compare phone-only movement, glasses/head-only movement, and movements affecting both. For a train simulation use departure/cruising/braking/dwell labels and independent markers. A tap marks the time you tapped, not exact physical arrival. Start with short sessions and export often. Test screen lock separately; continuity is unknown.
+**Restart the development or standalone server after changing environment values.**
 
-## Data and export
+## 3. Import MTA subway schedules
 
-Recordings remain **in page memory** until exported. Reload/exit/crash may lose them; Clear recording asks for confirmation. Recording automatically stops at 100,000 samples. Plot history is bounded separately.
+For generated routes, run:
 
-JSON contains separate G2 samples and phone-motion events, ISO UTC wall times, monotonic receipt milliseconds since page initialization, per-sample labels, explicit markers, stream requests/device events, secure-context status, and metadata. CSV merges both streams by WebView receipt time with source labels and separate columns. Values are recorded at event receipt, not sensor acquisition timestamps. Exports snapshot the recording at click time; stop recording first for a final capture.
+```powershell
+npm run gtfs:import
+```
 
-Some phone WebViews block downloads. Press Export JSON/CSV to prepare a snapshot, then choose a save method; preparation alone does not save a file:
+This downloads the official MTA supplemented GTFS ZIP and builds `data/mta-subway.json`. The generated catalog is excluded from Git, so a fresh checkout must create it locally. Importing can take several minutes and produce a large file; allow time, disk space, and memory for it.
 
-- **Save to laptop** (recommended during development): sends the prepared snapshot to the same Vite server and writes it into this project's `recordings/` folder. Wait for the saved filename confirmation. Restart Vite after installing this update. This endpoint is development-only and requires the phone to reach the laptop.
-- **Share / Save to Files**: opens native file sharing if the phone/WebView supports it. Choose a destination such as Files.
-- **Copy export text**: copies the snapshot where clipboard access is allowed; otherwise selects it for manual copying into Notes or a text file.
-- **Try download**: retains the ordinary file-download link for browsers that support it.
+If the automatic download fails, download **Supplemented GTFS** from [MTA developer resources](https://www.mta.info/developers), then import the ZIP:
 
-Export feedback stays next to the save controls, separate from sensor status. Save to laptop is an explicit local upload; recordings are not sent to a cloud service. Check a short recording before taking a long ride. Do not refresh a page with an unsaved recording. Browser storage persistence and remote live laptop viewing are not implemented.
+```powershell
+npm run gtfs:import -- "C:\path\to\gtfs_supplemented.zip"
+```
 
-## Synthetic preview and build
+A second argument can specify a different output path. If you use one, update `MTA_GTFS_CATALOG` to match it. Restart the server after importing or replacing the catalog.
 
-- `http://localhost:5173/?demo=1` explicitly selects generated test values. Press Start IMU. The banner and JSON identify synthetic data. It validates controls/plot/export, not hardware.
-- `npm run simulate` can preview the UI, but physical IMU behavior must be tested on G2. No fake readings are substituted in live mode.
-- `npm run build` performs strict type checking and Vite production build.
-- `npm run pack` builds and packages the diagnostic for installed-device testing.
+Refresh the catalog before demonstrating live route preparation. It contains schedules, station coordinates, lines, trip patterns, and service calendars. **Live delay feeds, train positions, and verified exits/platform paths are not integrated.**
 
-The manifest retains the template package ID and permissions. The current same-origin planner runs through Vite or the standalone server; packaged Even Hub deployment still needs backend connectivity and phone-motion validation. Choose a project identity before publication. See context/ for the product scope and remaining sensor/lifecycle tasks.
+Google's train legs do not contain the full intermediate station list this tracker needs. The backend matches them to active MTA schedules using line, endpoints, stop count, station sequence, and timing. If it cannot resolve a consistent sequence, it rejects the route rather than generating missing stops. See [routing details](docs/routing.md).
+
+## 4. Connect your Android phone and G2
+
+### Authorize the computer
+
+1. Pair G2 with the Even Realities app and verify the glasses work normally.
+2. Install Android Platform-Tools on the computer. Add its `platform-tools` directory to `PATH`, or configure `ANDROID_SDK_ROOT` for the Windows helper.
+3. Enable Android **Developer options** and **USB debugging**. Connect the phone with the data cable, unlock it, and accept the computer's debugging authorization prompt. See the official [ADB setup guide](https://developer.android.com/tools/adb).
+4. Check the connection:
+
+```powershell
+adb devices
+```
+
+Your phone should appear with status `device`, not `unauthorized` or `offline`.
+
+### Forward localhost to the laptop
+
+On Windows, from the repository root:
+
+```powershell
+npm run dev:phone
+```
+
+This helper finds ADB and runs the port forwarding. It does not start the app server. You can also run the forwarding directly on any supported desktop OS:
+
+```powershell
+adb reverse tcp:5173 tcp:5173
+```
+
+If several devices are connected, select yours explicitly with `adb -s YOUR_DEVICE_SERIAL reverse tcp:5173 tcp:5173`.
+
+**Why localhost matters:** Android can block device-motion events on an ordinary LAN HTTP URL such as `http://192.168.1.10:5173`. The forwarded `http://localhost:5173` address provides the secure-context setup used by this project's working phone-motion flow. Opening a LAN address and seeing the page load does not establish that motion sensors will work.
+
+### Start the server and open the app
+
+In one terminal, keep this running:
+
+```powershell
+npm run dev
+```
+
+Check that Vite is listening on **port 5173**. If it chooses another port because 5173 is occupied, resolve the conflict before continuing: the forwarding and app manifest currently expect 5173.
+
+In a second terminal, generate the development QR:
+
+```powershell
+npx evenhub qr --url http://localhost:5173
+```
+
+In the Even app, use its **Developer Center** scanner/development loading flow to open that QR. Grant glasses microphone access when requested. The app should open on the phone and the spoken-trip prompt should appear on G2.
+
+Use the Even app's loader for hardware testing. Opening the same URL in Chrome gives you a web preview without the G2 SDK bridge.
+
+Keep the cable attached, the laptop server running, and the phone screen on with the app visible. Repeat the ADB forwarding after a reconnect if necessary. Screen locking can leave the glasses connected while stopping the phone acceleration stream, which prevents reliable tracking.
+
+## 5. Run a first hardware demo without API keys
+
+This checks the display, phone motion, boarding loop, transfers, and arrival corrections before involving external services.
+
+1. On the mobile dashboard, expand **Demo controls** and choose **Load the NYC demo**.
+2. Enable **Phone motion** if it is off. Confirm its status becomes live while moving the phone slightly. Do not confuse this with the separate G2 IMU controls in Lab.
+3. The preset boards a downtown N train at Times Sq-42 St, transfers at 34 St-Herald Sq to F, then continues via 23 St to 14 St. These are illustrative instructions with **12-second simulated segments**, not a verified current travel recommendation.
+4. Tap the glasses once as though you have boarded. The detector now waits for departure motion.
+5. Move/lean the phone with a sustained motion to simulate departure. If needed, use **Mark departure now** in Demo controls to start the segment timer manually.
+6. Wait until arrival detection opens. With a 12-second segment, the gate opens at `floor(12 × 0.9) = 10` seconds after detected departure.
+7. Simulate a braking jolt, then hold the phone still. If the motion meets the configured rules, the display proposes arrival and immediately shows the new station/directions.
+8. During the correction window, tap only if you are **not** at the named station. Otherwise, let the countdown finish. A boarding tap during this window rejects the arrival; wait for it to finish before arming the next train.
+9. At the transfer, tap again once aboard the next train. Ordinary intermediate stops continue through the departure/arrival loop without another boarding tap.
+
+There is no built-in route silently preloaded on startup. Choose the demo explicitly. The mobile **Set current station** control can recover from a missed or accidental detection.
+
+## 6. Plan a spoken trip
+
+With credentials and the MTA catalog configured:
+
+1. Start at the glasses prompt: tap to record, then state both endpoints, for example, “I'm at Macy's Herald Square and I want to go to Times Square.”
+2. Tap again to submit. Recording also ends at 30 seconds. The display changes to **Understanding intent**.
+3. If several places match, scroll through the candidates and tap the intended result. Confirm the displayed origin and destination: scroll to Yes or No, then tap. No returns to the initial recording prompt.
+4. Yes opens **Planning your route**. A resolved Google/MTA itinerary loads into the boarding screen automatically.
+5. Follow the boarding instruction and tap once aboard. Phone motion is enabled automatically when supported; verify that it is live on the dashboard.
+6. Follow the same tracking, correction, and transfer loop as the hardware demo.
+
+Use specific landmarks, intersections, or station names. “42nd Street to 22nd Street” is ambiguous and does not uniquely identify either endpoint. A request that has no supported subway itinerary can be rejected even if a walking route exists.
+
+**Demo timing is enabled by default.** The mobile Demo controls checkbox, **Use 12-second station segments**, controls newly loaded generated plans. Turn it off **before planning/loading** to use provider schedule estimates. Changing it does not rewrite a route that is already loaded. The original provider itinerary retains its schedule data when demo timing is used.
+
+The system assumes you begin at the first boarding station and board the instructed train. It does not independently locate you, check the train you entered, or navigate indoor station corridors.
+
+## Mobile dashboard and Lab
+
+The default mobile screen focuses on:
+
+- **Glasses view:** a reconstruction of the app's display layout, including text, rail, and pixel icons. On a connected session it retains the last fully acknowledged update and identifies pending or failed sends. It is not a camera capture; native font appearance can differ.
+- **Right now:** the current instruction and an action appropriate to the state, such as record, submit, confirm, board, or reject an arrival.
+- **Stops remaining:** stops until the current train's transfer or destination.
+- **Phone motion:** off/waiting/live/paused feedback and enable/restart controls.
+- **Demo controls:** simulated timing, built-in route, manual departure, station correction, and stop tracking.
+
+**Lab** opens the original dashboard without reloading or losing the session. **Back to mobile view** returns. To open directly in Lab, use `http://localhost:5173/?view=lab` in the development QR.
+
+Lab contains typed route planning, prepared-trip JSON import/export, detector settings, motion plots, G2 IMU tools, labeled recordings, and the screen-lock diagnostic. See [mobile dashboard details](docs/mobile-dashboard.md).
+
+The glasses monitor belongs to the phone session. Opening the URL on your laptop starts a separate instance; it does not remotely mirror the phone's session.
+
+### Manual routes and saved plans
+
+In Lab, a simple route uses one line per station:
+
+```text
+Starting station | 0 | Board the indicated train
+Intermediate station | 12 | Stay on this train
+Destination station | 12 | Follow exit signs
+```
+
+Each duration is the expected travel time **from the previous station**, in seconds. The first station uses zero. Add `| transfer` as a fourth field at an intermediate transfer stop. Manual routes support 2–50 stations; they have no provider verification.
+
+Prepared-trip JSON preserves the richer walking/train-leg structure and source information. See the [trip format and import/export guide](docs/routing.md). Plans and active tracking are held in page memory; **export before reloading or closing if you want to keep a plan**. Automatic session restoration is not implemented.
+
+### Sensor recordings
+
+Use Lab to start G2 IMU capture and/or phone motion, start a labeled recording, then stop and export JSON/CSV. This is for diagnostics; starting the glasses IMU is unnecessary for station counting.
+
+During `npm run dev`, **Save to laptop** sends the recording to the Vite development server and writes it into the laptop's `recordings/` directory. It does not rely on the phone downloading a file. That upload endpoint is not included in the standalone `npm start` server. Export recordings before closing the page; they are not automatically persisted.
+
+## How station detection works
+
+The detector uses the Android device-motion event's gravity-removed acceleration in m/s². It evaluates a rolling motion window and directional consistency rather than assuming a fixed phone axis. It does not infer train speed from a quiet accelerometer.
+
+1. **Boarding:** a tap arms the first ride or the next ride after a transfer.
+2. **Departure:** sufficient sustained phone motion starts the segment timer.
+3. **Time gate:** arrival detection stays blocked until `floor(0.9 × expected segment seconds)` after departure. Time alone never advances a station.
+4. **Arrival evidence:** a coherent motion event, a short settling interval, and a quiet dwell propose the next station. Recoil is not required.
+5. **Correction window:** directions advance provisionally. A tap restores the prior position; otherwise the arrival commits. Moving the phone during the window does not cancel the proposal. A sensor gap can cancel it because continued sensing is no longer established.
+6. **Repeat:** ordinary stops await another departure. A transfer awaits a new boarding tap. The final stop retains arrival/exit guidance.
+
+Current short-demo settings are defined in [src/station-tracker.ts](src/station-tracker.ts):
+
+| Setting | Demo value |
+| --- | --- |
+| Departure motion threshold / sustained duration | 0.35 m/s² / 0.7 seconds |
+| Arrival motion threshold / sustained duration | 0.35 m/s² / 0.4 seconds |
+| Arrival settling interval | 0.3 seconds |
+| Quiet threshold / dwell | At or below 0.25 m/s² / 0.25 seconds |
+| Arrival correction window | 20 seconds |
+
+These thresholds apply to processed rolling-window evidence, not a single raw sample. Lab exposes the settings and detection log. The normal preset uses longer arrival durations; the short preset is designed for an in-person demonstration.
+
+## Build, test, and package
+
+Run commands from the repository root with Node 24:
+
+| Command | Purpose |
+| --- | --- |
+| `npm ci` | Install locked dependencies. |
+| `npm run dev` | Start Vite with the local speech, agent, routing, and recording-upload endpoints. |
+| `npm run dev:phone` | Windows ADB localhost-forwarding helper; does not start Vite. |
+| `npm run gtfs:import` | Download/import the MTA schedule catalog. |
+| `node --test dev/*.test.mjs` | Run automated tests; fixtures do not require API keys or paid requests. |
+| `npm run build` | Type-check and build the frontend into `dist/`. |
+| `npm start` | Serve `dist/` and the speech/agent/routing backend; defaults to port 5173 and loads `.env.local`. |
+| `npm run preview` | Preview frontend build assets; does not provide the complete companion backend. |
+| `npm run simulate` | Launch the Even Hub simulator against the running development URL. |
+| `npm run pack` | Build and package an Even Hub bundle using `app.json`. |
+
+To run the built app instead of Vite:
+
+```powershell
+npm run build
+npm start
+```
+
+Stop Vite first so the servers do not compete for port 5173. Retain `.env.local` and the generated MTA catalog on the server. The same ADB/QR setup can target this local server, but development-only recording uploads are unavailable.
+
+Automated tests cover detector transitions, schedule matching, provider contracts, audio handling, preparation flow, and UI state. They do not replace physical G2 checks or establish real-train accuracy. With Vite running, `/dev/mobile-ui.browser.html` also exercises the mobile layout and fallback controls without paid calls.
+
+### Wireless and deployment status
+
+The documented local hardware path uses USB forwarding. A wireless setup would need a backend reachable from the phone over trusted HTTPS, correct origin/permission configuration, and validation of motion access in the Even app. Hosting only `dist/` or installing an `.ehpk` does not provide the Node backend.
+
+The manifest currently permits `http://localhost:5173` and retains a template package ID. A distributable build needs its own identity and a configured backend origin/network whitelist. This repository does not yet provide a turnkey hosted service or production installation flow.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| `adb` is not found | Install Platform-Tools and add its directory to `PATH`; on Windows the helper also checks the Android SDK environment variables and default SDK location. Restart the terminal after changing `PATH`. |
+| Phone is `unauthorized` or missing | Unlock it, accept the USB debugging prompt, check USB debugging and the data cable, then run `adb devices` again. |
+| Page does not load on the phone | Keep the server running, verify port 5173, and repeat `adb reverse tcp:5173 tcp:5173`. Ensure you opened the localhost QR. |
+| “Not a secure context” / no phone motion on LAN HTTP | Use the documented forwarded localhost URL. Ordinary LAN HTTP is insufficient for this sensor flow. |
+| Phone motion stays waiting or paused | Keep the page visible and screen on, move the phone, and use Enable/Restart phone motion. Confirm the WebView exposes gravity-removed acceleration. Connected glasses alone do not establish phone sensor availability. |
+| Mobile page opens but G2 remains blank / preview only | Load through the Even app developer scanner, verify G2 pairing, and reopen the app. A desktop or ordinary browser has no G2 bridge. For a startup-page error, capture the exact error; native display validation can fail independently of pairing. |
+| Voice/route setup says a service is unavailable | Check `.env.local`, restart the server, and check the local readiness endpoints below. Full voice planning needs AI, Places, Routes, and the imported catalog. |
+| Google rejects a request | Verify billing, enabled Routes and Places API (New), and server-compatible key restrictions. Check the server error without sharing the key. |
+| AI returns 429 or 503 | 429 indicates a quota/rate-limit issue; inspect provider usage and wait or change to an available configured model/provider. 503 indicates temporary service unavailability. Repeated submission can consume more quota. |
+| “No fully resolved NYC subway itinerary” | Refresh the MTA feed, use precise endpoints, and try another route/time. Google and MTA schedules can disagree; the matcher deliberately rejects ambiguous or incomplete stop sequences. |
+| Trip still shows an old or demo route | Complete place confirmation and route planning, or explicitly load the intended route. A rejected request does not substitute a new demo itinerary. |
+| Arrival is detected too early for a real trip | Check whether 12-second demo timing was enabled when the plan loaded. Turn it off before loading a new plan to use schedule durations. |
+| Tap seems to undo a transfer arrival | During the correction countdown a tap means “not at this station.” Wait for it to finish before tapping to board the next train. |
+| Save to laptop is unavailable | Use `npm run dev` for the recording upload endpoint. The standalone server serves planning APIs but not that development feature. |
+| A reload lost the route | Session restoration is not implemented. Import an exported plan or prepare/load it again. |
+
+Local readiness endpoints, available while the server runs:
+
+- `http://localhost:5173/api/agent/status` — selected AI provider/model configuration, without returning keys.
+- `http://localhost:5173/api/trips/status` — routing key/catalog readiness and catalog information.
+
+A ready status means configuration is present; it does not prove the provider accepts a key or that a particular journey resolves. Verify a complete spoken request and confirmed route before presenting.
+
+## Current limits
+
+- **Hackathon motion detector:** demonstrated with simulated seated movement, not validated for dependable real-train station counting. Pocket/bag movement can still produce misleading evidence.
+- **Screen-on operation:** the screen-lock experiment retained some app/glasses activity but lost usable phone acceleration. No Android foreground service, background-sensing guarantee, or automatic keep-awake feature is included. See [screen-lock findings](docs/screen-lock.md).
+- **NYC subway scope:** the imported catalog and matcher target MTA subway service. This is not a general bus, commuter-rail, or worldwide transit navigator.
+- **Schedule estimates:** no live-delay integration or independent proof that the rider is on the right train. Follow actual service information and station signs.
+- **General exits:** no verified street-exit or platform routing; the final instruction is “Follow exit signs.”
+- **Memory-only sessions:** reloads discard active tracking and plans unless you exported a plan. Recording exports are also manual.
+- **Online preparation:** provider access and the companion backend are required for new voice-generated routes. Audio is sent to the selected speech provider; trip text and route information are sent to the configured planning services.
+
+## Repository guide
+
+| Path | Contents |
+| --- | --- |
+| `src/main.ts` | App startup, Even bridge, sensors, shared state, and display updates. |
+| `src/mobile-ui.ts`, `src/mobile-view.ts` | Minimal mobile dashboard and phase-specific actions. |
+| `src/glasses-view.ts`, `src/glasses-art.ts`, `src/glasses-native.ts` | Glasses layouts, pixel graphics, previews, and native container projection. |
+| `src/glasses-planner.ts`, `src/asr/` | Glasses preparation flow and speech capture. |
+| `src/station-tracker.ts`, `src/trip-ui.ts`, `src/trip-status.ts` | Motion state machine, settings, Lab controls, and journey presentation. |
+| `src/trip-plan.ts` | Prepared-trip schema, validation, and mapping to tracker stops. |
+| `server/` | Backend APIs, AI providers, place resolution, Google routing, and MTA matching. |
+| `scripts/` | MTA importer and Android development helpers. |
+| `dev/` | Automated tests and development browser checks. |
+| `data/` | Local generated schedule catalog; not bundled in a fresh clone. |
+| `recordings/` | Sensor experiments and development recording exports. |
+| `context/` | Product scope, build tasks, and project planning documents. |
+| `app.json` | Even Hub manifest, permissions, and package metadata. |
+
+Further implementation notes: [routing and trip JSON](docs/routing.md), [speech and agent flow](docs/voice-agent.md), [mobile dashboard](docs/mobile-dashboard.md), and [screen-lock investigation](docs/screen-lock.md).

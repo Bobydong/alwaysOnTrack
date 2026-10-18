@@ -129,6 +129,14 @@ export function mountTripControls(tracker: StationTracker, now: () => number, on
   return {
     render,
     loadPrepared,
+    loadDemo() {
+      if (tracker.active || plannerControls.busy() || speech?.busy) throw new Error('Finish the current action before loading the demo.')
+      el<HTMLTextAreaElement>('trip-route').value = exampleRoute(12)
+      for (const [key, value] of Object.entries(demoSettings)) el<HTMLInputElement>(`trip-${key}`).value = String(value)
+      tracker.load(parseRoute(exampleRoute(12)), demoSettings, now())
+      tracker.demoTravelSeconds = 12
+      preparation?.loaded(); el('trip-error').textContent = ''; render()
+    },
     tap() {
       if (tracker.canArm) { arm(); return true }
       if (tracker.state === 'candidate') { tracker.veto(now()); render(); return true }

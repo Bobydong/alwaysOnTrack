@@ -14,6 +14,8 @@ import { GlassesSpeech } from './asr/stt'
 import { speechGlasses } from './asr/speech-view'
 import { GlassesPlanner } from './glasses-planner'
 import { planningView } from './planning-view'
+import { mountMobile } from './mobile-ui'
+import { mobileJourney } from './mobile-view'
 
 mountDiagnostic()
 const demo = new URLSearchParams(location.search).get('demo') === '1'
@@ -27,6 +29,9 @@ try { savedLockTest = readLockTestReport(localStorage.getItem(lockTestStorageKey
 let lastLockSave = 0
 let bridge: EvenAppBridge | undefined
 let ready = false, running = false, busy = false, recording = false, phoneMotionOn = false, closed = false
+let mobileUI: ReturnType<typeof mountMobile> | undefined
+let lastDeliveredPanels: GlassesPanel[] | null = null
+let displayError = '', lastNotice = '', deviceConnected: boolean | null = null
 let previewTimer: number | undefined
 let history: Sample[] = [], phoneHistory: PhoneMotionSample[] = [], recorded: Sample[] = [], phoneRecorded: PhoneMotionSample[] = [], marks: Mark[] = []
 let baseline: Vector = { x: null, y: null, z: null }
@@ -38,7 +43,7 @@ let preparedExport: { filename: string; content: string; mime: string } | undefi
 const sessions: { t: number; action: string; pace: number }[] = []
 const pace = () => Number(el<HTMLSelectElement>('pace').value) as ImuReportPace
 const label = () => el<HTMLSelectElement>('label').value
-const status = (message: string) => { el('status').textContent = message }
+const status = (message: string) => { lastNotice = message; el('status').textContent = message; mobileUI?.render() }
 const controls = () => {
   el<HTMLButtonElement>('start').disabled = !ready || busy || running || closed
   el<HTMLButtonElement>('stop').disabled = !ready || busy || closed
@@ -83,7 +88,7 @@ function renderSetup() {
   el('glasses-setup-status').textContent = `${s.phase}${from && to ? `: ${from.name}, ${from.address} → ${to.name}, ${to.address}` : ''}${s.phase === 'confirm' ? `. Selected: ${s.yes ? 'Yes' : 'No'}` : ''}${s.error ? `: ${s.error}` : ''}`
   el<HTMLButtonElement>('glasses-setup-scroll').disabled = !['confirm', 'choose-origin', 'choose-destination'].includes(s.phase)
   el<HTMLButtonElement>('glasses-setup-tap').disabled = ['loaded', 'understanding', 'planning'].includes(s.phase) || lockTest.active
-  tripUI.render(); refreshGlasses()
+  tripUI.render(); refreshGlasses(); mobileUI?.render()
 }
 glassesPlanner.subscribe(renderSetup)
 renderSetup()
@@ -115,6 +120,41 @@ mountLockTestControls(async () => {
   renderLockTest(savedLockTest, false); refreshGlasses()
 }, () => exportData('json'))
 renderLockTest(savedLockTest, false)
+mobileUI = mountMobile(() => {
+  const at = stamp(), planning = glassesPlanner.snapshot(), sample = phoneHistory.at(-1)
+  const linear = sample && axes.every(a => sample.acceleration[a] !== null)
+  const journey = mobileJourney(tracker, planning, speech.snapshot(), at)
+  if (lockTest.active) Object.assign(journey, { title: 'Screen-lock test running', detail: 'Stop the diagnostic in Lab before starting a trip.',
+    action: '', canAct: false, canChoose: false, hasTrip: false })
+  return { journey, desired: desiredGlasses(), delivered: lastDeliveredPanels,
+    connected: ready && !!bridge && !closed && deviceConnected !== false, previewOnly: demo,
+    sending: renderBusy, displayError, notice: demo ? 'Browser preview only. Open through Even to connect your glasses.' : lastNotice || 'Open through Even with your glasses connected.',
+    motion: !phoneMotionOn ? 'off' : at - lastPhoneReceipt > 1500 && Number.isFinite(lastPhoneReceipt) ? 'stale' : linear ? 'live' : 'waiting',
+    blocked: closed || lockTest.active,
+    canDepart: tracker.state === 'waiting-departure', canStop: tracker.active,
+    canLoad: !tracker.active && !glassesPlanner.busy && !speech.busy,
+    demoTiming: tracker.demoTravelSeconds !== null, selectedDemoTiming: el<HTMLInputElement>('plan-demo').checked,
+    route: glassesPlanner.visible ? [] : tracker.route, stationIndex: tracker.stationIndex,
+  }
+}, {
+  async tap() {
+    if (!ready || !bridge || closed || deviceConnected === false) throw new Error('Open this app through Even with the glasses connected.')
+    if (glassesPlanner.visible) await glassesPlanner.tap()
+    else {
+      if (tracker.canArm) { await enablePhoneMotion(); if (!phoneMotionOn) throw new Error(el('phone-status').textContent || 'Enable phone motion first.') }
+      tripUI.tap()
+    }
+    tripUI.render(); refreshGlasses()
+  },
+  scroll(direction) { glassesPlanner.scroll(direction) },
+  async newTrip() { if (tracker.active) tracker.stop(stamp()); await glassesPlanner.reset(); tripUI.render(); refreshGlasses() },
+  async motion() { if (phoneMotionOn) disablePhoneMotion(); await enablePhoneMotion(); if (!phoneMotionOn) throw new Error(el('phone-status').textContent || 'Phone motion unavailable.') },
+  demo() { tripUI.loadDemo(); refreshGlasses() },
+  depart() { tracker.manualDeparture(stamp()); tripUI.render(); refreshGlasses() },
+  stop() { tracker.stop(stamp()); tripUI.render(); refreshGlasses() },
+  correct(index) { tracker.correct(index, stamp()); tripUI.render(); refreshGlasses() },
+  timing(value) { el<HTMLInputElement>('plan-demo').checked = value },
+})
 function mark(text = label()) {
   if (!recording) { status('Start recording first to save a marker.'); return }
   marks.push({ t: stamp(), wallTime: new Date().toISOString(), label: text }); recordInfo()
@@ -353,6 +393,7 @@ async function initialize() {
     }
   })
   unsubscribeDevice=bridge.onDeviceStatusChanged(device=>{
+    deviceConnected = device.connectType === 'connected'
     sessions.push({t:stamp(),action:`device:${device.connectType}`,pace:pace()})
     status(`Device status: ${device.connectType}. If samples stop, reconnect and use Stop/Start IMU.`)
   })
@@ -368,6 +409,14 @@ function glassesDiagnostic() {
   const latest = history.at(-1)
   return `IMU ${running?'ON':'OFF'} ${recording?'REC':''}\n${axes.map(a=>`${a.toUpperCase()}: ${latest?.[a]?.toFixed(3)??'--'}`).join('  ')}`
 }
+function desiredGlasses() {
+  return lockTest.active ? lockTestGlasses(lockTest.report!, Date.now()) : preparation.panels() ??
+    (speech.busy || speech.snapshot().micMayBeOn ? speechGlasses(speech.snapshot()) : glassesView(tracker, stamp(), glassesDiagnostic()))
+}
+function finishDisplay(panels: GlassesPanel[], phase: string) {
+  if (closed || displayPhase() !== phase || !panels.every(p => glassContents.get(p.containerID) === panelSignature(p))) return
+  lastDeliveredPanels = panels; displayError = ''
+}
 async function uploadGraphics(panels: GlassesPanel[], valid = () => !closed) {
   for (const panel of panels.filter(p => p.graphic)) {
     if (!valid()) return
@@ -381,9 +430,7 @@ async function uploadGraphics(panels: GlassesPanel[], valid = () => !closed) {
 }
 function refreshGlasses() {
   if(!bridge || !ready || closed || renderBusy)return
-  const now = stamp()
-  const panels = lockTest.active ? lockTestGlasses(lockTest.report!, Date.now()) : preparation.panels() ??
-    (speech.busy || speech.snapshot().micMayBeOn ? speechGlasses(speech.snapshot()) : glassesView(tracker, now, glassesDiagnostic()))
+  const panels = desiredGlasses()
   const layout = glassesLayoutKey(panels)
   if(layout === glassLayout && panels.every(panel => glassContents.get(panel.containerID) === panelSignature(panel)))return
   const phaseAtSend = displayPhase()
@@ -399,6 +446,7 @@ function refreshGlasses() {
       glassContents.clear()
       for (const p of panels.filter(p => !p.graphic)) glassContents.set(p.containerID, panelSignature(p))
       await uploadGraphics(panels, () => !closed && displayPhase() === phaseAtSend)
+      finishDisplay(panels, phaseAtSend)
       return
     }
     // Send the tap action/deadline first; extra framing updates must not delay it.
@@ -413,9 +461,11 @@ function refreshGlasses() {
       if (ok) glassContents.set(panel.containerID, panel.content)
     }
     await uploadGraphics(panels, () => !closed && displayPhase() === phaseAtSend)
+    finishDisplay(panels, phaseAtSend)
   }
-  void update().catch(error => { if (displayPhase() === phaseAtSend) lockTest.bridgeResult(false, Date.now(), document.hidden); console.error(error) }).finally(()=>{
+  void update().catch(error => { if (displayPhase() === phaseAtSend) { lockTest.bridgeResult(false, Date.now(), document.hidden); displayError = error instanceof Error ? error.message : 'Glasses update failed.' } console.error(error) }).finally(()=>{
       renderBusy=false
+      mobileUI?.render()
       // A bridge write may finish after a phase transition. Send the current
       // phase immediately, rather than leaving the previous countdown visible.
       if (displayPhase() !== phaseAtSend) refreshGlasses()
@@ -428,9 +478,12 @@ window.setInterval(()=>{
   if (!document.hidden) {
     tripUI.render(glassesDiagnostic())
     if (lockTest.active) el<HTMLButtonElement>('trip-arm').disabled = true
-    renderPlot(history,baseline,el<HTMLInputElement>('center').checked,now)
-    renderMotionComparison(history,phoneHistory,now)
+    if (mobileUI?.isLab()) {
+      renderPlot(history,baseline,el<HTMLInputElement>('center').checked,now)
+      renderMotionComparison(history,phoneHistory,now)
+    }
     recordInfo(); renderLockTest(lockTest.snapshot(Date.now()) ?? savedLockTest, lockTest.active)
+    mobileUI?.render()
   }
   if(running && now-Math.max(lastReceipt,startedAt)>3000)status('No IMU samples for over 3 seconds. Check glasses connection/host support, then Stop IMU and Start again. No synthetic values are substituted.')
   if(phoneMotionOn && now-Math.max(lastPhoneReceipt,0)>3000 && lastPhoneReceipt===-Infinity)
