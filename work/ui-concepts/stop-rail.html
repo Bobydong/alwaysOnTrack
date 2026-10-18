@@ -1,0 +1,90 @@
+<div id="g2-stop-rail-concept">
+  <style>
+    #g2-stop-rail-concept .rail-preview{padding:18px 8px 24px}
+    #g2-stop-rail-concept .rail-display{--ink:#9be4b1;--glass:#07130c;position:relative;height:352px;width:100%;background:var(--glass);color:var(--ink);font:400 16px/1.35 ui-monospace,SFMono-Regular,Consolas,monospace}
+    #g2-stop-rail-concept .rail-display *{box-sizing:border-box}
+    #g2-stop-rail-concept .rail-journey{position:absolute;right:22px;top:24px;width:44%;height:254px}
+    #g2-stop-rail-concept .rail-track{position:absolute;right:6px;top:6px;bottom:6px;width:1px;background:var(--ink);opacity:.5}
+    #g2-stop-rail-concept .rail-progress{position:absolute;right:6px;top:6px;width:2px;background:var(--ink);height:0;transition:height .35s ease}
+    #g2-stop-rail-concept .rail-node{position:absolute;right:2px;width:9px;height:9px;border:1px solid var(--ink);border-radius:50%;transform:translateY(-50%);background:var(--glass)}
+    #g2-stop-rail-concept .rail-node.next-node{background:var(--ink)}
+    #g2-stop-rail-concept .rail-marker{position:absolute;right:-1px;width:15px;height:15px;transform:translateY(-50%);border:2px solid var(--ink);border-radius:50%;background:var(--glass);transition:top .35s ease}
+    #g2-stop-rail-concept .rail-name{position:absolute;right:31px;max-width:calc(100% - 34px);text-align:right;transform:translateY(-50%);overflow-wrap:anywhere;display:flex;flex-direction:column;gap:3px}
+    #g2-stop-rail-concept .rail-name span{font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+    #g2-stop-rail-concept .rail-name strong{font-size:15px;font-weight:400}
+    #g2-stop-rail-concept .rail-name.is-next strong{font-size:20px;font-weight:500}
+    #g2-stop-rail-concept .rail-remaining{position:absolute;bottom:24px;right:22px;text-align:right;display:flex;flex-direction:column;gap:3px}
+    #g2-stop-rail-concept .rail-remaining strong{font-size:22px;font-weight:500}
+    #g2-stop-rail-concept .rail-remaining span{font-size:12px}
+    #g2-stop-rail-concept .rail-status{position:absolute;bottom:24px;left:22px;max-width:33%;font-size:12px}
+    #g2-stop-rail-concept .rail-arrival{position:absolute;top:28px;left:22px;max-width:54%;display:none;gap:9px;flex-direction:column}
+    #g2-stop-rail-concept .rail-arrival span{font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+    #g2-stop-rail-concept .rail-arrival strong{font-weight:500;font-size:22px}
+    #g2-stop-rail-concept .rail-display.is-arrived .rail-journey{display:none}
+    #g2-stop-rail-concept .rail-display.is-arrived .rail-arrival{display:flex}
+    @media(max-width:450px){
+      #g2-stop-rail-concept .rail-journey{width:64%;right:16px}
+      #g2-stop-rail-concept .rail-name.is-next strong{font-size:17px}
+      #g2-stop-rail-concept .rail-name strong{font-size:13px}
+      #g2-stop-rail-concept .rail-status{left:16px;max-width:30%;font-size:11px}
+      #g2-stop-rail-concept .rail-remaining{right:16px}
+      #g2-stop-rail-concept .rail-remaining strong{font-size:19px}
+    }
+    @media(prefers-reduced-motion:reduce){#g2-stop-rail-concept .rail-marker,#g2-stop-rail-concept .rail-progress{transition:none}}
+  </style>
+  <div class="viz-controls">
+    <button class="btn" id="rail-previous" type="button" disabled>Previous stop</button>
+    <button class="btn" id="rail-next" type="button">Next stop</button>
+    <span class="text-small">Illustrative journey · confirmed arrivals</span>
+  </div>
+  <div class="rail-preview viz-dotted-background">
+    <div class="rail-display" role="img" aria-label="Subway stop rail concept" aria-live="polite">
+      <div class="rail-journey">
+        <div class="rail-track"></div><div class="rail-progress"></div>
+        <div class="rail-node" data-station="0" style="top:6px"></div>
+        <div class="rail-node" data-station="1" style="top:66.5px"></div>
+        <div class="rail-node" data-station="2" style="top:127px"></div>
+        <div class="rail-node" data-station="3" style="top:187.5px"></div>
+        <div class="rail-node" data-station="4" style="top:248px"></div>
+        <div class="rail-marker" style="top:6px"></div>
+        <div class="rail-name rail-last" style="top:6px"><span>Last stop</span><strong>Herald Sq</strong></div>
+        <div class="rail-name rail-next-label is-next" style="top:66.5px"><span>Next stop</span><strong>23 St</strong></div>
+        <div class="rail-name rail-end" style="top:248px"><span>Get off at</span><strong>Broadway–Lafayette</strong></div>
+      </div>
+      <div class="rail-arrival"><span>You’ve arrived</span><strong>Broadway–Lafayette</strong></div>
+      <div class="rail-status">Watching for arrival</div>
+      <div class="rail-remaining"><strong>4 stops left</strong><span>to Broadway–Lafayette</span></div>
+    </div>
+  </div>
+  <script>
+    (()=>{
+      const root=document.getElementById('g2-stop-rail-concept');
+      const display=root.querySelector('.rail-display'),previous=root.querySelector('#rail-previous'),next=root.querySelector('#rail-next');
+      const names=['Herald Sq','23 St','14 St','W 4 St','Broadway–Lafayette'];
+      const saved=window.openai?.widgetState?.modelContent?.stationIndex;
+      let index=Number.isInteger(saved)&&saved>=0&&saved<names.length?saved:0;
+      const y=i=>6+i*60.5;
+      function render(){
+        const last=index===names.length-1,atNext=Math.min(index+1,names.length-1);
+        display.classList.toggle('is-arrived',last);
+        root.querySelector('.rail-marker').style.top=`${y(index)}px`;
+        root.querySelector('.rail-progress').style.height=`${y(index)-6}px`;
+        root.querySelectorAll('.rail-node').forEach(node=>node.classList.toggle('next-node',Number(node.dataset.station)===atNext));
+        const current=root.querySelector('.rail-last'),upcoming=root.querySelector('.rail-next-label'),end=root.querySelector('.rail-end');
+        current.style.top=`${y(index)}px`;current.querySelector('strong').textContent=names[index];
+        upcoming.style.top=`${y(atNext)}px`;upcoming.querySelector('strong').textContent=names[atNext];
+        end.hidden=atNext===names.length-1;
+        upcoming.querySelector('span').textContent=atNext===names.length-1?'Next · get off':'Next stop';
+        root.querySelector('.rail-status').textContent=last?'Trip complete':'Watching for arrival';
+        root.querySelector('.rail-remaining strong').textContent=last?'Follow exit signs':`${names.length-1-index} ${names.length-1-index===1?'stop':'stops'} left`;
+        root.querySelector('.rail-remaining span').textContent=last?'':`to ${names[names.length-1]}`;
+        previous.disabled=index===0;next.disabled=last;
+        display.setAttribute('aria-label',last?`Arrived at ${names[index]}. Follow exit signs.`:`Last stop ${names[index]}. Next stop ${names[atNext]}. ${names.length-1-index} stops left to ${names[names.length-1]}.`);
+      }
+      function move(amount){index=Math.max(0,Math.min(names.length-1,index+amount));render();window.openai?.setWidgetState?.({modelContent:{stationIndex:index},privateContent:null})?.catch(()=>{});}
+      previous.addEventListener('click',()=>move(-1));next.addEventListener('click',()=>move(1));
+      window.addEventListener('openai:set_globals',event=>{const value=event.detail?.globals?.widgetState?.modelContent?.stationIndex;if(Number.isInteger(value)&&value>=0&&value<names.length){index=value;render();}});
+      render();
+    })();
+  </script>
+</div>
