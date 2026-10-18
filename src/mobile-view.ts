@@ -39,6 +39,7 @@ export function mobileJourney(tracker: StationTracker, planning: PlanningSnapsho
     detail = `${trip.status}\n${trip.timing}`
   }
   return { title, detail, action, canAct,
+    detector: planning.phase === 'loaded' && tracker.sensing ? { status: trip.status, timing: trip.timing } : null,
     showReset: planning.phase !== 'prompt', resetLabel: planning.phase === 'loaded' ? 'New trip' : 'Start over',
     canChoose: ['confirm', 'choose-origin', 'choose-destination'].includes(planning.phase),
     choiceLabel: planning.phase === 'confirm' ? `Selected: ${planning.yes ? 'Yes' : 'No'}` : 'Scroll through places',

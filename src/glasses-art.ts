@@ -1,8 +1,8 @@
 import { zlibSync } from 'fflate'
 
 export type PixelArt = { width: number; height: number; rects: [number, number, number, number, number][] }
-export type PixelIcon = 'train' | 'transfer' | 'exit' | 'mic' | 'check' | 'route'
-const icons: Record<PixelIcon, string[]> = {
+export type PixelIcon = 'train' | 'transfer' | 'exit' | 'mic' | 'check' | 'route' | 'train-moving' | 'train-stopped'
+const icons: Record<Exclude<PixelIcon, 'train-moving' | 'train-stopped'>, string[]> = {
   train: ['0011111100','0111111110','0100000010','0101101010','0101101010','0100000010','0111111110','0101001010','0011111100','0010000100','0100000010'],
   transfer: ['0000001000','1111111100','0000001000','0000000000','0001000000','0011111111','0001000000'],
   exit: ['1111100000','1000100000','1000100100','1000111110','1000100100','1000100000','1111100000'],
@@ -11,6 +11,17 @@ const icons: Record<PixelIcon, string[]> = {
   route: ['1110000000','1011111100','1110000100','0000000100','0011111100','0010000000','0010001110','0011111010','0000001110'],
 }
 export function pixelIcon(kind: PixelIcon): PixelArt {
+  if (kind === 'train-moving' || kind === 'train-stopped') {
+    // Side view, pointing right. Keep the train in exactly the same position;
+    // only the three trailing speed lines change when departure is detected.
+    const rects: PixelArt['rects'] = [
+      [14, 5, 26, 2, 255], [12, 7, 2, 10, 255], [40, 7, 2, 2, 255], [42, 9, 2, 8, 255],
+      [14, 15, 28, 2, 255], [16, 9, 5, 4, 255], [24, 9, 5, 4, 255], [32, 9, 7, 4, 255],
+      [16, 17, 5, 4, 255], [34, 17, 5, 4, 255],
+    ]
+    if (kind === 'train-moving') rects.push([1, 6, 7, 2, 255], [4, 10, 6, 2, 255], [1, 14, 7, 2, 255])
+    return { width: 48, height: 24, rects }
+  }
   const rects: PixelArt['rects'] = []
   const rows = icons[kind], top = Math.floor((24 - rows.length * 2) / 2)
   rows.forEach((row, y) => [...row].forEach((c, x) => { if (c === '1') rects.push([2 + x * 2, top + y * 2, 2, 2, 255]) }))

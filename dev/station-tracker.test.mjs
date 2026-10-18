@@ -124,9 +124,34 @@ test('manual correction resets the timer; manual departure can recover a missed 
   assert.equal(s.tracker.departureAt, null)
   s.tracker.manualDeparture(s.now())
   assert.equal(s.tracker.state, 'travelling')
-  assert.equal(s.tracker.watchAt, s.now() + 10000)
+  assert.equal(s.tracker.watchAt, s.now() + 13000)
   s.tracker.correct(2, s.now())
   assert.equal(s.tracker.state, 'complete')
+})
+
+test('arrival gating adds three seconds after the rounded 90 percent point for every segment duration', () => {
+  for (const duration of [12, 60, 91]) {
+    const s = session(demoSettings, true, `Start\nEnd | ${duration}`)
+    s.tracker.manualDeparture(0)
+    const opens = Math.floor(duration * 0.9) * 1000 + 3000
+    assert.equal(s.tracker.watchAt, opens)
+    s.feed(opens - 20)
+    assert.equal(s.tracker.state, 'travelling')
+    s.feed(20)
+    assert.equal(s.tracker.state, 'arrival-watch')
+  }
+})
+
+test('normal and demo arrivals retain a full 16-second correction window', () => {
+  for (const settings of [defaultSettings, demoSettings]) {
+    const s = session(settings); s.candidate()
+    const event = s.tracker.events.find(e => e.action === 'arrival-candidate')
+    assert.equal(s.tracker.candidateUntil - event.t, 16000)
+    s.feed(s.tracker.candidateUntil - s.now() - 20)
+    assert.equal(s.tracker.stationIndex, 0)
+    s.feed(20)
+    assert.equal(s.tracker.stationIndex, 1)
+  }
 })
 
 test('route/settings are validated and locked during tracking', () => {
@@ -211,11 +236,11 @@ test('settling time precedes the quiet dwell', () => {
   assert.equal(s.tracker.state, 'candidate')
 })
 
-test('demo accepts the inclusive 0.25 quiet boundary without treating it as a jolt', () => {
+test('demo accepts the inclusive 0.30 quiet boundary without treating it as a jolt', () => {
   const s = session(demoSettings); s.tracker.manualDeparture(s.now()); s.feed(16000)
-  s.feed(2000, { x: 0.25, y: 0, z: 0 })
+  s.feed(2000, { x: 0.30, y: 0, z: 0 })
   assert.ok(!s.tracker.events.some(e => e.action === 'braking-jolt'))
-  s.feed(800, { x: 0.5, y: 0, z: 0 }); s.feed(1500, { x: 0.25, y: 0, z: 0 })
+  s.feed(800, { x: 0.5, y: 0, z: 0 }); s.feed(1500, { x: 0.30, y: 0, z: 0 })
   assert.equal(s.tracker.state, 'candidate')
 })
 
@@ -233,7 +258,7 @@ test('the blocked countdown and waiting-for-jolt message are mutually exclusive'
     const open = tripStatus(s.tracker, s.now())
     assert.equal(open.status, 'waiting for jolt')
     assert.equal(open.timing, 'Arrival detection OPEN')
-    assert.ok(s.tracker.expectedAt > s.now())
+    assert.equal(s.tracker.watchAt, s.tracker.departureAt + 13000)
     assert.ok(!open.glassesText.includes('ETA'))
     assert.ok(!open.glassesText.includes('opens in'))
   }
@@ -357,7 +382,7 @@ test('ordinary stops loop automatically, transfers wait for boarding tap, and de
 
 test('correcting a detected transfer restores position and hides previewed boarding instructions', () => {
   const s = session(demoSettings, true, 'A\nTransfer | 12 | Board Green | transfer\nEnd | 12 | Exit north')
-  s.tracker.manualDeparture(s.now()); s.feed(12000); s.motion(800); s.feed(1000)
+  s.tracker.manualDeparture(s.now()); s.feed(13000); s.motion(800); s.feed(1000)
   assert.equal(s.tracker.state, 'candidate')
   assert.equal(tripStatus(s.tracker, s.now()).instruction, 'Board Green')
   assert.equal(s.tracker.stationIndex, 0)

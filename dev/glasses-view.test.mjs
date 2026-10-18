@@ -80,11 +80,11 @@ test('boarding contains only station, train and boarding tap prompt; tapping swi
   assert.equal(panel(after, 'trip-progress'), '2 STOPS LEFT')
 })
 
-test('countdown ticks retain geometry and detection/veto status stays bottom anchored', () => {
+test('routine detector phases stay off glasses, while arrival correction stays bottom anchored', () => {
   const t = make(); t.arm(0); t.manualDeparture(0)
   t.ingest({ t: 1000, acceleration: { x: 0.02, y: 0, z: 0 } })
   const a = glassesView(t, 1000), b = glassesView(t, 1500)
-  assert.match(panel(a, 'trip-action'), /DETECTION OPENS IN 9s/)
+  assert.equal(panel(a, 'trip-action'), undefined)
   assert.equal(glassesLayoutKey(a), glassesLayoutKey(b))
   t.state = 'candidate'; t.candidateUntil = 6000
   assert.match(panel(glassesView(t, 1500), 'trip-action'), /TAP IF NOT AT Middle/)
@@ -92,7 +92,7 @@ test('countdown ticks retain geometry and detection/veto status stays bottom anc
   assert.equal(panel(glassesView(t, 1500), 'trip-progress'), '1 STOP LEFT')
   assert.equal(t.stationIndex, 0)
   const candidate = glassesView(t, 1500)
-  for (const view of [a, candidate]) {
+  for (const view of [candidate]) {
     const status = view.find(p => p.containerName === 'trip-action')
     assert.equal(status.yPosition + status.height, 288 - glassesSpacing.margin)
   }
@@ -115,7 +115,7 @@ test('next station matches get-off station on approach; transfer train appears o
   assert.ok(!detected.some(p => /TAP ONCE ABOARD/.test(p.content)))
   t.veto(0)
   assert.equal(t.stationIndex, 1)
-  assert.match(panel(glassesView(t, 0), 'trip-action'), /RETRY IN/)
+  assert.equal(panel(glassesView(t, 0), 'trip-action'), undefined)
   assert.match(panel(glassesView(t, 0), 'trip-station'), /NEXT \/ TRANSFER Transfer/)
   t.correct(2, 100)
   assert.equal(t.state, 'waiting-boarding')
@@ -158,9 +158,9 @@ test('API plans use the next ride boarding station across transfer walks and kee
   assert.equal(stopRail(t).last, 'Delta boarding')
 })
 
-test('missing motion overrides detection status, and long train instructions fit the boarding card', () => {
+test('lost sensing shows a rider-facing pause action, and long boarding instructions fit', () => {
   const t = make(); t.arm(0)
-  assert.equal(panel(glassesView(t, 2000), 'trip-action'), 'WAITING FOR PHONE MOTION')
+  assert.equal(panel(glassesView(t, 2000), 'trip-action'), 'TRACKING PAUSED CHECK PHONE')
   const stops = parseRoute(route); stops[0].instruction = 'Long instruction for the next train and its boarding station. '.repeat(2)
   t.stop(3000); t.load(stops, demoSettings, 4000)
   const view = glassesView(t, 4000); validate(view)
@@ -194,9 +194,12 @@ test('right text blocks grow leftward and bottom blocks grow upward', () => {
   assert.equal(short.xPosition + short.width, longer.xPosition + longer.width)
   assert.equal(short.yPosition, longer.yPosition)
   t.arm(0); t.manualDeparture(0); t.lastValidAt = 0
-  const fresh = glassesView(t, 0).find(p => p.containerName === 'trip-action')
+  assert.equal(panel(glassesView(t, 0), 'trip-action'), undefined)
+  t.state = 'candidate'; t.candidateUntil = 16000
+  const correction = glassesView(t, 0).find(p => p.containerName === 'trip-action')
+  t.state = 'travelling'
   const stale = glassesView(t, 2000).find(p => p.containerName === 'trip-action')
-  assert.equal(fresh.yPosition + fresh.height, stale.yPosition + stale.height)
+  assert.equal(correction.yPosition + correction.height, stale.yPosition + stale.height)
 })
 
 test('destination directions appear during correction window and disappear if arrival is rejected', () => {
@@ -234,7 +237,7 @@ test('long rides slide a bounded window; the endpoint stays anchored and short r
   assert.deepEqual(stopRail(t), { remaining: 20, hidden: true, endIndex: 20, currentIndex: 0,
     last: 'Station 0', next: 'Station 1', destination: 'Station 20', transfer: false })
   const first = glassesView(t, 0), endpoint = first.find(p => p.containerName === 'trip-detail')
-  assert.ok(first.length <= 10); validate(first)
+  assert.ok(first.length <= 11); validate(first)
   t.correct(10, 100)
   const middle = glassesView(t, 100)
   assert.equal(stopRail(t).last, 'Station 10'); assert.equal(stopRail(t).next, 'Station 11')
@@ -286,6 +289,31 @@ test('SDK startup and rebuild payloads contain only supported image fields, neve
       assert.ok(!JSON.stringify(payload).includes('graphic'))
     }
   }
+})
+
+test('sideways train adds trailing lines only after departure and removes them on arrival', () => {
+  const t = make(); t.arm(0); t.lastValidAt = 0
+  const icon = view => view.find(p => p.containerName === 'ride-motion')
+  const waiting = glassesView(t, 0)
+  assert.deepEqual(icon(waiting).graphic, pixelIcon('train-stopped'))
+  t.manualDeparture(0)
+  const moving = glassesView(t, 0)
+  assert.deepEqual(icon(moving).graphic, pixelIcon('train-moving'))
+  assert.deepEqual(pixelIcon('train-moving').rects.slice(0, -3), pixelIcon('train-stopped').rects)
+  assert.equal(glassesLayoutKey(waiting), glassesLayoutKey(moving))
+  t.state = 'arrival-watch'
+  assert.equal(glassesLayoutKey(moving), glassesLayoutKey(glassesView(t, 0)))
+  t.state = 'candidate'; t.candidateUntil = 16000
+  const stopped = glassesView(t, 0)
+  assert.deepEqual(icon(stopped).graphic, pixelIcon('train-stopped'))
+  assert.match(panel(stopped, 'trip-action'), /TAP IF NOT AT Middle/)
+  t.veto(0)
+  assert.deepEqual(icon(glassesView(t, 0)).graphic, pixelIcon('train-moving'))
+  assert.deepEqual(icon(glassesView(t, 2000)).graphic.rects, [])
+  assert.equal(panel(glassesView(t, 2000), 'trip-action'), 'TRACKING PAUSED CHECK PHONE')
+  for (const view of [waiting, moving, stopped, glassesView(t, 2000)]) validate(view)
+  t.correct(2, 3000)
+  assert.deepEqual(glassesView(t, 3000).find(p => p.containerName === 'state-icon').graphic, pixelIcon('train-stopped'))
 })
 
 test('rail labels and count align close to the rail, with only the last-station circle filled', () => {

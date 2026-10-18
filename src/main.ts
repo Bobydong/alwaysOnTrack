@@ -125,7 +125,7 @@ mobileUI = mountMobile(() => {
   const linear = sample && axes.every(a => sample.acceleration[a] !== null)
   const journey = mobileJourney(tracker, planning, speech.snapshot(), at)
   if (lockTest.active) Object.assign(journey, { title: 'Screen-lock test running', detail: 'Stop the diagnostic in Lab before starting a trip.',
-    action: '', canAct: false, canChoose: false, hasTrip: false })
+    action: '', canAct: false, canChoose: false, hasTrip: false, detector: null })
   return { journey, desired: desiredGlasses(), delivered: lastDeliveredPanels,
     connected: ready && !!bridge && !closed && deviceConnected !== false, previewOnly: demo,
     sending: renderBusy, displayError, notice: demo ? 'Browser preview only. Open through Even to connect your glasses.' : lastNotice || 'Open through Even with your glasses connected.',

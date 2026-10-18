@@ -50,3 +50,21 @@ test('mirror keeps the last fully sent frame until the new display is acknowledg
   assert.equal(disconnected.label, 'Preview only'); assert.equal(disconnected.panels, desired)
   assert.equal(mobileMirror({ ...base, previewOnly: true }).label, 'Preview only')
 })
+
+test('detector countdown and phases remain on the phone while the glasses stay quiet', () => {
+  const t = tracker(), p = planning('loaded')
+  assert.equal(mobileJourney(t, p, speech('idle'), 0).detector, null)
+  t.arm(0); t.manualDeparture(0); t.lastValidAt = 1000
+  assert.match(mobileJourney(t, p, speech('idle'), 1000).detail, /Detection opens in 12 s/)
+  assert.equal(mobileJourney(t, p, speech('idle'), 1000).detector.timing, 'Detection opens in 12 s')
+  for (const state of ['waiting-departure', 'travelling', 'arrival-watch', 'cooldown']) {
+    t.state = state; t.lastValidAt = 1000; t.retryAfter = 10000
+    const panels = glassesView(t, 1000)
+    assert.ok(!panels.some(panel => /DETECTION|JOLT|SETTLING|WAITING|RETRY/.test(panel.content)))
+    assert.ok(!panels.some(panel => panel.containerName === 'trip-action'))
+  }
+  t.state = 'arrival-watch'
+  assert.match(mobileJourney(t, p, speech('idle'), 1000).detail, /waiting for jolt.*\nArrival detection OPEN/)
+  assert.equal(mobileJourney(t, p, speech('idle'), 1000).detector.status, 'waiting for jolt')
+  assert.equal(mobileJourney(t, planning('prompt'), speech('idle'), 1000).detector, null)
+})

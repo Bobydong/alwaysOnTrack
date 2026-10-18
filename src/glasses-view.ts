@@ -58,12 +58,13 @@ export function withPixelIcon(panels: GlassesPanel[], kind: PixelIcon): GlassesP
   if (!title) return panels
   const graphic = pixelIcon(kind)
   const icon: GlassesPanel = { containerID: 9, containerName: 'state-icon', xPosition: 16,
-    yPosition: title.yPosition + title.paddingLength + 2, width: 24, height: 24,
+    yPosition: title.yPosition + title.paddingLength + 2, width: graphic.width, height: graphic.height,
     borderWidth: 0, borderColor: 0, borderRadius: 0, paddingLength: 0, isEventCapture: 0, content: `${kind} icon`, graphic }
   return [...panels.map(p => {
     if (p !== title) return p
-    const lines = p.width <= 264 ? fitLines(p.content, 17, 3) : p.content.split('\n')
-    return { ...p, content: lines.join('\n'), xPosition: 44, width: p.width - 36,
+    const offset = graphic.width + 12
+    const lines = p.width <= 264 ? fitLines(p.content, graphic.width > 24 ? 15 : 17, 3) : p.content.split('\n')
+    return { ...p, content: lines.join('\n'), xPosition: 8 + offset, width: p.width - offset,
       height: p.width <= 264 ? lines.length * glassesSpacing.lineHeight + p.paddingLength * 2 + glassesSpacing.verticalClearance : p.height }
   }), icon]
 }
@@ -89,8 +90,16 @@ export function glassesView(tracker: StationTracker, now: number, diagnostic = '
     width: 576, height: 288, borderWidth: 0, borderColor: 0, borderRadius: 0, paddingLength: 0, isEventCapture: 1, content: ' ' }
   const panels = [input, ...journeyPanels(tracker, now, diagnostic)]
   const display = journeyPresentation(tracker)
-  return display.canArm ? withPixelIcon(panels, display.state === 'waiting-boarding' ? 'transfer' : 'train')
-    : display.state === 'complete' ? withPixelIcon(panels, 'exit') : panels
+  if (display.canArm || display.state === 'complete') return withPixelIcon(panels, 'train-stopped')
+  if (tracker.state === 'idle') return panels
+  const stale = tracker.sensing && now - tracker.lastValidAt > 1500
+  const moving = !display.pending && ['travelling', 'arrival-watch', 'cooldown'].includes(tracker.state)
+  const kind = moving ? 'train-moving' : 'train-stopped'
+  const graphic = pixelIcon(kind)
+  return [...panels, { containerID: 9, containerName: 'ride-motion', xPosition: 16, yPosition: 16,
+    width: graphic.width, height: graphic.height, borderWidth: 0, borderColor: 0, borderRadius: 0,
+    paddingLength: 0, isEventCapture: 0, content: stale ? 'Tracking unavailable' : moving ? 'Train moving' : 'Train at station',
+    graphic: stale ? { ...graphic, rects: [] } : graphic }]
 }
 
 export function stopRail(tracker: StationTracker) {
@@ -126,7 +135,7 @@ function railPanels(tracker: StationTracker, action: string, pending: boolean): 
     ...(!nextIsEnd ? [railText(3, 'trip-detail', 156, rail.transfer ? 'TRANSFER AT' : 'GET OFF AT'),
       railText(8, 'trip-end-name', 192, rail.destination)] : []),
     railText(5, 'trip-progress', 244, `${rail.remaining} ${rail.remaining === 1 ? 'STOP' : 'STOPS'} LEFT`),
-    corner(4, 'trip-action', 'bottom-left', action, pending ? 3 : 2),
+    ...(action ? [corner(4, 'trip-action', 'bottom-left', action, pending ? 3 : 2)] : []),
   ]
   // Two small image tiles obey the SDK's 144-pixel maximum image height.
   const rects: PixelArt['rects'] = [], positions = [18, ...(!nextIsEnd ? [72] : []), 188]
@@ -166,17 +175,10 @@ function journeyPanels(tracker: StationTracker, now: number, diagnostic: string)
     corner(3, 'trip-detail', 'top-right', 'Follow exit signs.'),
     ...(display.pending ? [corner(4, 'trip-action', 'bottom-left', correction, 3)] : []),
   ]
-  let action = ''
-  switch (tracker.state) {
-    case 'waiting-departure': action = 'WAITING FOR DEPARTURE'; break
-    case 'travelling': action = `DETECTION OPENS IN ${seconds((tracker.watchAt ?? now) - now)}`; break
-    case 'arrival-watch':
-      action = tracker.brakingPhase === 'waiting for jolt' ? 'WAITING FOR JOLT'
-        : tracker.brakingPhase === 'allowing motion to settle' ? 'MOTION SETTLING' : 'WAITING TO STOP'; break
-    case 'candidate': action = correction; break
-    case 'cooldown': action = `${tracker.cooldownReason === 'Arrival vetoed' ? 'RESET / ' : ''}RETRY IN ${seconds(tracker.retryAfter - now)}`; break
-  }
-  if (!display.pending && tracker.sensing && now - tracker.lastValidAt > 1500) action = 'WAITING FOR PHONE MOTION'
+  // Routine detector phases/countdowns belong on the phone. Keep the rider's
+  // station rail still, showing an action only for correction or lost tracking.
+  let action = display.pending ? correction : ''
+  if (!display.pending && tracker.sensing && now - tracker.lastValidAt > 1500) action = 'TRACKING PAUSED\nCHECK PHONE'
   return railPanels(tracker, action, display.pending)
 }
 

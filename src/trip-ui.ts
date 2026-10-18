@@ -1,4 +1,4 @@
-import { defaultSettings, demoSettings, parseRoute, StationTracker, type TrackerSettings } from './station-tracker'
+import { arrivalDetectionDelaySeconds, defaultSettings, demoSettings, parseRoute, StationTracker, type TrackerSettings } from './station-tracker'
 import { el } from './imu-ui'
 import { tripStatus } from './trip-status'
 import { mountPlannerControls } from './planner-ui'
@@ -37,7 +37,7 @@ export function mountTripControls(tracker: StationTracker, now: () => number, on
     <label>Quiet dwell (seconds) <input id="trip-dwellSeconds" type="number" min="0.2" max="30" step="0.05" value="${defaultSettings.dwellSeconds}"></label>
     <label>Correction window (seconds) <input id="trip-vetoSeconds" type="number" min="1" max="30" step="1" value="${defaultSettings.vetoSeconds}"></label>
     </div></details><button id="trip-load">Load route, then tap glasses to start</button></fieldset>
-    <p class="hint">Arrival inputs stay blocked until 90% of the expected segment duration has elapsed. Then a jolt, settling, and quiet dwell can propose an arrival. Short demo: 0.35 m/s² for 0.4 seconds, 0.3 seconds to settle, then acceleration at or below 0.25 m/s² for 0.25 seconds. No recoil is required. Directions advance immediately when a stop is detected. During the correction window, tap if not at station to restore your previous position. Shifting or other phone motion does not reset it. Quiet readings do not measure train speed.</p>
+    <p class="hint">Arrival inputs stay blocked until floor(90% of the expected segment seconds) plus ${arrivalDetectionDelaySeconds} seconds after departure. Then a jolt, settling, and quiet dwell can propose an arrival. Short demo: 0.35 m/s² for 0.4 seconds, 0.3 seconds to settle, then acceleration at or below ${demoSettings.quietThreshold.toFixed(2)} m/s² for ${demoSettings.dwellSeconds} seconds. No recoil is required. Directions advance immediately when a stop is detected. During the correction window, tap if not at station to restore your previous position. Shifting or other phone motion does not reset it. Quiet readings do not measure train speed.</p>
     <div class="controls"><button id="trip-arm" disabled>Start tracking (or tap glasses)</button><button id="trip-stop" disabled>Stop tracking</button>
     <button id="trip-depart" disabled>Mark departure now</button><button id="trip-veto" disabled>Not at station</button></div>
     <p id="trip-error" role="alert"></p><p id="trip-start-hint" role="status"></p><p id="trip-status" role="status"></p><p id="trip-instruction" role="status"></p><p id="trip-timing"></p><p id="trip-evidence" class="hint"></p>

@@ -8,16 +8,17 @@ export type TrackerSettings = {
   motionSeconds: number; dwellSeconds: number; vetoSeconds: number
   settlingSeconds: number
 }
+export const arrivalDetectionDelaySeconds = 3
 export const defaultSettings: TrackerSettings = {
   departureWindowMs: 500, departureThreshold: 0.35, departureSeconds: 0.7,
   windowMs: 500, motionThreshold: 0.35, quietThreshold: 0.18,
-  motionSeconds: 0.8, dwellSeconds: 3, vetoSeconds: 20,
+  motionSeconds: 0.8, dwellSeconds: 3, vetoSeconds: 16,
   settlingSeconds: 0.5,
 }
 export const demoSettings: TrackerSettings = {
   ...defaultSettings,
-  windowMs: 250, motionThreshold: 0.35, quietThreshold: 0.25,
-  motionSeconds: 0.4, dwellSeconds: 0.25, vetoSeconds: 20,
+  windowMs: 250, motionThreshold: 0.35, quietThreshold: 0.30,
+  motionSeconds: 0.4, dwellSeconds: 0.25, vetoSeconds: 16,
   settlingSeconds: 0.3,
 }
 export type TripState = 'idle' | 'ready' | 'waiting-boarding' | 'waiting-departure' | 'travelling' | 'arrival-watch' | 'candidate' | 'cooldown' | 'complete'
@@ -94,7 +95,7 @@ export class StationTracker {
   }
   get watchAt() {
     if (this.departureAt === null || !this.nextStop) return null
-    return this.departureAt + Math.floor(this.nextStop.travelSeconds * 0.9) * 1000
+    return this.departureAt + (Math.floor(this.nextStop.travelSeconds * 0.9) + arrivalDetectionDelaySeconds) * 1000
   }
   get expectedAt() { return this.departureAt === null || !this.nextStop ? null : this.departureAt + this.nextStop.travelSeconds * 1000 }
 

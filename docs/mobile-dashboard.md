@@ -12,6 +12,12 @@ The app opens to the minimal mobile view. **Lab** opens the original dashboard i
 
 Keep the phone screen on during the demo. The preview belongs to this phone session; opening the URL in another browser creates a separate session rather than remotely watching the phone.
 
+Routine detector phases and countdowns stay in the phone's **Right now** status and Lab. The glasses show the station rail without departure/jolt/settling/cooldown messages. Arrival correction remains visible for 16 seconds, and missing motion shows only a brief rider-facing “Tracking paused / Check phone” action. Arrival detection opens three seconds after the rounded 90% segment point (13 seconds for a 12-second demo segment).
+
+During active tracking, a high-contrast **Station detector** card sits directly below the glasses preview. Its status uses 26–34 px type and timing uses 22–28 px type, with stable-width countdown digits for presentation visibility. It appears for departure, blocked detection, arrival watching, correction, and cooldown, then hides while planning, boarding, or after committed completion.
+
+The glasses and mirrored preview include a small side-view train at top left. It gains three trailing lines after departure is detected and loses them when arrival is proposed or the ride waits at a station. It changes on state transitions without continuous animation. Correcting a false arrival restores the moving icon. If phone samples stop, the ride icon clears and the tracking-paused action appears rather than falsely claiming the train has stopped. Boarding/arrival pages place the still-train icon beside their heading.
+
 ## Demo controls
 
 Expand **Demo controls** to select 12-second timing for newly generated plans, load the built-in NYC demo, manually mark departure, correct the current station, or stop tracking. Loading a new demo is disabled during an active trip or preparation request. The timing toggle changes future plan loads; it does not rewrite an already loaded route.

@@ -202,7 +202,7 @@ This checks the display, phone motion, boarding loop, transfers, and arrival cor
 3. The preset boards a downtown N train at Times Sq-42 St, transfers at 34 St-Herald Sq to F, then continues via 23 St to 14 St. These are illustrative instructions with **12-second simulated segments**, not a verified current travel recommendation.
 4. Tap the glasses once as though you have boarded. The detector now waits for departure motion.
 5. Move/lean the phone with a sustained motion to simulate departure. If needed, use **Mark departure now** in Demo controls to start the segment timer manually.
-6. Wait until arrival detection opens. With a 12-second segment, the gate opens at `floor(12 × 0.9) = 10` seconds after detected departure.
+6. Wait until arrival detection opens. With a 12-second segment, the gate opens at `floor(12 × 0.9) + 3 = 13` seconds after detected departure. Detector countdowns and phases appear on the phone, not the glasses.
 7. Simulate a braking jolt, then hold the phone still. If the motion meets the configured rules, the display proposes arrival and immediately shows the new station/directions.
 8. During the correction window, tap only if you are **not** at the named station. Otherwise, let the countdown finish. A boarding tap during this window rejects the arrival; wait for it to finish before arming the next train.
 9. At the transfer, tap again once aboard the next train. Ordinary intermediate stops continue through the departure/arrival loop without another boarding tap.
@@ -268,7 +268,7 @@ The detector uses the Android device-motion event's gravity-removed acceleration
 
 1. **Boarding:** a tap arms the first ride or the next ride after a transfer.
 2. **Departure:** sufficient sustained phone motion starts the segment timer.
-3. **Time gate:** arrival detection stays blocked until `floor(0.9 × expected segment seconds)` after departure. Time alone never advances a station.
+3. **Time gate:** arrival detection stays blocked until `floor(0.9 × expected segment seconds) + 3` seconds after departure. Time alone never advances a station.
 4. **Arrival evidence:** a coherent motion event, a short settling interval, and a quiet dwell propose the next station. Recoil is not required.
 5. **Correction window:** directions advance provisionally. A tap restores the prior position; otherwise the arrival commits. Moving the phone during the window does not cancel the proposal. A sensor gap can cancel it because continued sensing is no longer established.
 6. **Repeat:** ordinary stops await another departure. A transfer awaits a new boarding tap. The final stop retains arrival/exit guidance.
@@ -280,8 +280,8 @@ Current short-demo settings are defined in [src/station-tracker.ts](src/station-
 | Departure motion threshold / sustained duration | 0.35 m/s² / 0.7 seconds |
 | Arrival motion threshold / sustained duration | 0.35 m/s² / 0.4 seconds |
 | Arrival settling interval | 0.3 seconds |
-| Quiet threshold / dwell | At or below 0.25 m/s² / 0.25 seconds |
-| Arrival correction window | 20 seconds |
+| Quiet threshold / dwell | At or below 0.30 m/s² / 0.25 seconds |
+| Arrival correction window | 16 seconds |
 
 These thresholds apply to processed rolling-window evidence, not a single raw sample. Lab exposes the settings and detection log. The normal preset uses longer arrival durations; the short preset is designed for an in-person demonstration.
 
