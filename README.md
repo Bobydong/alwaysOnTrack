@@ -1,6 +1,6 @@
 # AlwaysOnTrack: G2 subway companion prototype
 
-An Even Hub G2 and Android phone prototype for testing route-aware subway station prompts. It includes an IMU explorer for understanding device motion and an experimental station counter that uses Android phone motion with a manually supplied route. The unused ASR interface/stub from the Even Hub scaffold remains in `src/ui.ts` and `src/asr/stt.ts`. No microphone or cloud service is used.
+An Even Hub G2 and Android phone prototype for testing route-aware subway station prompts. It includes an IMU explorer, a phone-motion station counter, and a Google Routes + MTA schedule planner that prepares ordered subway itineraries. Manual routes are also supported. The unused ASR interface/stub from the Even Hub scaffold remains in `src/ui.ts` and `src/asr/stt.ts`. No microphone is used; route preparation calls Google online, while tracking runs on the phone.
 
 ## Project status
 
@@ -16,13 +16,16 @@ Completed in the current prototype:
 - Tap-to-start tracking, phone-motion departure detection, and a segment timer that opens arrival detection after `floor(90% × segment duration)`.
 - Arrival proposals based on phone acceleration, followed by a veto countdown. Phone movement during that countdown does not cancel the proposal; a single tap vetoes it. Missing phone sensor samples cancel it because the app cannot confirm tracking continued.
 - Glasses and phone status messages for blocked detection, arrival watching, proposed arrivals, veto cooldowns, departure waiting, and trip completion.
+- A minimal G2 display confined to the right half, with a station card and stacked countdown and stop count. Transfer/exit instructions appear when needed; routine sensing explanations are omitted. A live layout preview is available on the phone; this visual revision still needs a physical glasses check.
 - Manual station correction and manual departure controls for recovering during a demo.
 - Timestamped detector events and current route/state/settings in the JSON export.
+- Versioned prepared-trip JSON: ordered walking/train legs, line/headsign, intermediate stations, per-station schedule estimates, and source provenance. JSON can be imported and loaded into the existing transfer loop.
+- Google Routes backend and MTA supplemented GTFS importer. The planner resolves intermediate stops against active MTA schedules and rejects unresolved/ambiguous alternatives. Google credentials stay on the server. Live Google validation requires local API-key setup; automated routing checks use synthetic fixtures.
 
 Still to do or validate:
 
-- Route planning from origin to destination. Routes are currently entered manually; no Google Maps, transit, or other routing API is connected.
-- Automatic sourcing and verification of station, platform, and exit instructions. The current instructions are authored manually; preset directions are fictional examples. The new transfer boarding flow still needs an on-device demo check.
+- Live Google/MTA end-to-end route validation with a Routes API key, including a hand-checked NYC transfer journey. The provider connection and itinerary conversion are implemented; model/agent conversation, place disambiguation, and a polished review flow remain future work.
+- Automatic sourcing and verification of platform and exit details. Preset directions are fictional examples; planned itineraries currently use line/headsign and general exit-sign guidance. The local transfer loop has been tested on G2; externally planned journeys still need a live check.
 - More motion recordings and threshold tuning, especially tests that compare ordinary seated movement with train departure and braking. The user reports the current demo transition works well; real-train reliability has not been established.
 - Phone sensor behavior during screen lock, app backgrounding, reconnection, and longer trips. The current experiment assumes the page stays in the foreground.
 - Any use of G2 IMU data to improve detection. The glasses IMU is captured for diagnostics and comparison only; it does not affect departure or arrival decisions.
@@ -42,9 +45,22 @@ On this machine an installed Node binary was found at:
 `C:\Users\bryan\AppData\Local\Author Software\nvm\installs\v24.22.0\node.exe`
 If the node/npm shims say no active version is configured, activate your installed version in nvm. The implementation was checked using that binary directly.
 
+## Online route preparation
+
+1. Set `GOOGLE_MAPS_API_KEY` in `.env.local` on the laptop. Enable Routes API and billing for the key. Never use a `VITE_` prefix for this secret.
+2. Run `npm run gtfs:import` to import the official MTA supplemented subway schedules. If downloading fails, download the supplemented ZIP from [MTA developer resources](https://www.mta.info/developers) and run `npm run gtfs:import -- "path/to/feed.zip"`.
+3. Restart Vite. Open **Plan a NYC subway journey** in the route panel, enter origin and destination, and press **Find subway routes**.
+4. Choose **Load this itinerary**. Board at its first train station and tap the glasses. Walking links and transfers are retained in the full plan; walking to a new boarding station does not create a false station count.
+
+Google supplies train endpoints and stop counts; MTA schedules supply the actual intermediate stations and expected travel times. Unresolved routes are rejected. Specific exits/platform paths are not inferred. Plans are currently in page memory; export before reloading.
+
+See [prepared-trip format and routing setup](docs/routing.md) for the API contract, matching rules, limits, JSON import/export, and standalone server deployment. `npm run build` then `npm start` serves the built app and planner backend on port 5173; static hosting alone does not include the route service.
+
 ## Experimental station counting
 
 Enable phone motion over Android localhost/USB forwarding, then use the new station-counter panel:
+
+On launch, a NYC demo is preloaded and waits for your boarding tap: **Times Sq-42 St (N) → 34 St-Herald Sq (transfer to F) → 23 St → 14 St**. It uses the short-demo detector settings and simulated 12-second segments (arrival sensing opens after 10 seconds). It makes no Google request and is not a verified live itinerary. Enable phone motion before tapping to start; at Herald Sq, tap again after boarding the F train.
 
 1. Choose the three-minute example itinerary or the **Short demo with transfer (12-second segments)**. Both have a starting station, an ordinary stop, a transfer station, and a destination. Edit names, durations, and instructions as needed. Use `station name | travel seconds from previous station | optional instruction | transfer`; the last field is only for intermediate stops where you change trains. The starting station uses 0 seconds. Old two-field routes still work. Press **Load route, then tap glasses to start**.
 2. **Board the first train and single-tap the glasses to begin tracking**, or press **Start tracking (or tap glasses)** on the phone. Motion does not start tracking before your tap. Arming starts raw recording automatically; the travel timer waits for departure motion. Keep the phone secured in one position and the page in the foreground. G2 IMU can also be started for comparison; its readings do not control the station count.
@@ -81,10 +97,24 @@ The pure state machine is covered by `dev/station-tracker.test.mjs`; with Node 2
 - A comparison plot of G2 vector magnitude and phone linear / gravity-inclusive acceleration magnitude. It compares receipt timing and magnitude, not direction: the devices use different axis frames. Missing browser fields remain null.
 - Measured WebView receipt rate and largest interval within the plot window. P100-P1000 are protocol pacing selections, not asserted Hz. Stop the stream before changing pace.
 - Optional subtraction of a captured two-second mean for visual comparison. This is a display offset, not gravity removal or calibrated acceleration. It never changes raw exports.
-- A glasses display with raw values and recording status, updated at most twice per second without overlapping display writes.
+- A live glasses-layout preview. G2 switches between boarding (3 visible containers), tracking/approach (4), and destination (2), plus one empty gesture-capture container on every page, confined to the right half. Countdown and ride stop count are stacked toward the right edge. Writes are serialized, and phase changes discard unsent obsolete content. Trip detection and tap meanings are unchanged.
 - Explicit stale-stream feedback. After reconnect/resume use Stop/Start if needed; sensor continuity is not assumed.
 
 Missing/nonfinite channels remain null in JSON and blank in CSV, not invented zeros. Valid zero values are retained. The SDK may normalize the native payload; these are SDK-delivered channels, not direct access to sensor registers. Phone browser motion events require a secure context in many implementations, may require host permission, and may be missing from this WebView. The normal QR command below serves plain HTTP from the laptop LAN, so Android may withhold phone sensor readings even though the glasses IMU works. The dashboard reports secure-context status and unavailable fields. Foreground events do not establish lock-screen continuity.
+
+## Glasses layout
+
+The G2 page uses the right half of its 576 x 288 canvas, with a bordered station card and unframed supporting text. The left half stays unlit. The phone preview uses the same coordinates and content; native font rendering can differ.
+
+All visible containers use 10-pixel padding. Heights are calculated from wrapped line count using a 24-pixel line-height estimate plus padding, and containers stack with 8-pixel gaps and outer margins. The height updates automatically when the text changes its line count. When long content exceeds the available space, supporting instructions are shortened with an ellipsis while station, detection status, and count stay visible; full route instructions remain on the phone. Adjust the shared `glassesSpacing` constants in `src/glasses-view.ts` if hardware font measurements require it. The empty gesture layer has no padding and does not resize.
+
+Boarding shows the station, line/direction, and **Tap once aboard**. The tap arms the same departure detector and opens tracking: next station, ride endpoint, detection status, and **STOP completed/total** for this train ride (boarding starts at 0). As soon as the next stop is the transfer or destination, **Get off at** replaces the next-station widget and transfer/exit guidance appears. One-stop rides enter this layout immediately. A proposed arrival still offers the veto countdown; only a confirmed transfer opens the next boarding screen and resets the ride count. The destination screen says **You have arrived** and **Follow exit signs**.
+
+Live plans use the supplied train destination/headsign for direction; they do not invent uptown/downtown labels or platform/track numbers. Transfer walks use the next train's actual boarding station, which can differ from the station where you got off. Long text is shortened on the glasses; full route instructions remain on the phone. The built-in NYC demo supplies explicit downtown directions.
+
+Close and reopen after updating the app. Subsequent layout transitions happen automatically with `rebuildPageContainer`; ordinary countdown updates use `textContainerUpgrade`. An empty container behind the visible content captures gestures on each page, preserving single-tap start/veto and double-tap system exit. Visible text does not capture gestures, avoiding firmware scrolling on the boarding tap prompt. The train instruction and boarding tap prompt each have their own border. Rebuilds are serialized and failed writes are retried; display flicker and timing still need a physical G2 check.
+
+The phone's live glasses preview reflects the current journey layout. [Illustrative journey screens](docs/glasses-layout-preview.png) use the NYC demo; fonts approximate the device and these are not hardware captures. Relevant checks: `node --test dev/glasses-view.test.mjs dev/station-tracker.test.mjs dev/routing.test.mjs`.
 
 ## First axis-identification experiment (about five minutes)
 
@@ -122,4 +152,4 @@ Export feedback stays next to the save controls, separate from sensor status. Sa
 - `npm run build` performs strict type checking and Vite production build.
 - `npm run pack` builds and packages the diagnostic for installed-device testing.
 
-The app manifest has no microphone/network permission because this diagnostic uses neither service. It retains the template package ID; choose a project identity before publication. See context/ for the product scope and remaining sensor/lifecycle tasks.
+The manifest retains the template package ID and permissions. The current same-origin planner runs through Vite or the standalone server; packaged Even Hub deployment still needs backend connectivity and phone-motion validation. Choose a project identity before publication. See context/ for the product scope and remaining sensor/lifecycle tasks.

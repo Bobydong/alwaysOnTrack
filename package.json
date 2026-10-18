@@ -6,13 +6,17 @@
   "scripts": {
     "dev": "vite",
     "dev:phone": "powershell -ExecutionPolicy Bypass -File scripts/phone-localhost.ps1",
+    "gtfs:import": "node scripts/import-mta-gtfs.mjs",
+    "start": "node --env-file-if-exists=.env.local server/index.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "pack": "npm run build && evenhub pack app.json dist",
     "simulate": "evenhub-simulator http://localhost:5173"
   },
   "dependencies": {
-    "@evenrealities/even_hub_sdk": "^0.0.10"
+    "@evenrealities/even_hub_sdk": "^0.0.10",
+    "csv-parse": "^7.0.3",
+    "fflate": "^0.8.3"
   },
   "devDependencies": {
     "@evenrealities/evenhub-cli": "^0.1.12",

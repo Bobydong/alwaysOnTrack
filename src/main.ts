@@ -1,9 +1,10 @@
 import { waitForEvenAppBridge, TextContainerProperty, CreateStartUpPageContainer,
-  TextContainerUpgrade, OsEventTypeList, ImuReportPace, type EvenAppBridge } from '@evenrealities/even_hub_sdk'
+  TextContainerUpgrade, RebuildPageContainer, OsEventTypeList, ImuReportPace, type EvenAppBridge } from '@evenrealities/even_hub_sdk'
 import { axes, combinedCsv, phoneMotionFromEvent, readVector, summarize, type PhoneMotionSample, type Sample, type Mark, type Vector } from './imu-data'
 import { mountDiagnostic, el, renderMotionComparison, renderPlot } from './imu-ui'
 import { StationTracker } from './station-tracker'
 import { mountTripControls } from './trip-ui'
+import { glassesView, glassesLayoutKey } from './glasses-view'
 
 mountDiagnostic()
 const demo = new URLSearchParams(location.search).get('demo') === '1'
@@ -17,7 +18,9 @@ let previewTimer: number | undefined
 let history: Sample[] = [], phoneHistory: PhoneMotionSample[] = [], recorded: Sample[] = [], phoneRecorded: PhoneMotionSample[] = [], marks: Mark[] = []
 let baseline: Vector = { x: null, y: null, z: null }
 let lastReceipt = -Infinity, lastPhoneReceipt = -Infinity, startedAt = -Infinity, invalid = 0, phoneInvalid = 0, renderBusy = false
-let glassText = '', downloadUrl = ''
+const glassContents = new Map<number, string>()
+let glassLayout = ''
+let downloadUrl = ''
 let preparedExport: { filename: string; content: string; mime: string } | undefined
 const sessions: { t: number; action: string; pace: number }[] = []
 const pace = () => Number(el<HTMLSelectElement>('pace').value) as ImuReportPace
@@ -228,11 +231,13 @@ async function initialize() {
   if(demo){ready=true; controls(); status('Synthetic preview ready. Start IMU to exercise the dashboard.');return}
   const waiting=window.setTimeout(()=>status('Still waiting for the Even App bridge. Open this URL via the Even app QR flow. A normal browser has no G2 bridge. Use ?demo=1 only for synthetic preview.'),7000)
   bridge=await waitForEvenAppBridge(); window.clearTimeout(waiting)
-  const result=await bridge.createStartUpPageContainer(new CreateStartUpPageContainer({containerTotalNum:1,textObject:[new TextContainerProperty({
-    xPosition:0,yPosition:0,width:576,height:288,paddingLength:6,containerID:1,containerName:'imu',isEventCapture:1,
-    content:'IMU explorer\nFor trips: load route on phone\nThen single-tap to start tracking',
-  })]}))
+  const panels = glassesView(tracker, stamp())
+  const result=await bridge.createStartUpPageContainer(new CreateStartUpPageContainer({
+    containerTotalNum:panels.length,textObject:panels.map(panel => new TextContainerProperty(panel)),
+  }))
   if(result!==0)throw new Error(`Startup page failed (${result}); IMU was not enabled.`)
+  glassLayout = glassesLayoutKey(panels)
+  for (const panel of panels) glassContents.set(panel.containerID, panel.content)
   unsubscribe=bridge.onEvenHubEvent(event=>{
     const sys=event.sysEvent
     // Handle IMU before zero-value click normalization. An IMU envelope is never a tap.
@@ -256,16 +261,41 @@ async function initialize() {
 function displayPhase() {
   return `${tracker.state}:${tracker.stationIndex}:${tracker.brakingPhase}:${tracker.cooldownReason}`
 }
+function glassesDiagnostic() {
+  const latest = history.at(-1)
+  return `IMU ${running?'ON':'OFF'} ${recording?'REC':''}\n${axes.map(a=>`${a.toUpperCase()}: ${latest?.[a]?.toFixed(3)??'--'}`).join('  ')}`
+}
 function refreshGlasses() {
   if(!bridge || !ready || closed || renderBusy)return
   const now = stamp()
-  const latest=history.at(-1)
-  const text=tripUI.glassesText() ?? `IMU ${running?'ON':'OFF'} ${recording?'REC':''}\n${axes.map(a=>`${a.toUpperCase()}: ${latest?.[a]?.toFixed(3)??'--'}`).join('  ')}\n${running && now-lastReceipt>3000?'STALE | ':''}Tap: mark | Double tap: exit\nTrip: load route on phone, then tap to start`
-  if(text===glassText)return
+  const panels = glassesView(tracker, now, glassesDiagnostic())
+  const layout = glassesLayoutKey(panels)
+  if(layout === glassLayout && panels.every(panel => glassContents.get(panel.containerID) === panel.content))return
   const phaseAtSend = displayPhase()
   renderBusy=true
-  void bridge.textContainerUpgrade(new TextContainerUpgrade({containerID:1,containerName:'imu',content:text}))
-    .then(ok=>{if(ok)glassText=text}).catch(console.error).finally(()=>{
+  const update = async () => {
+    if (layout !== glassLayout) {
+      const ok = await bridge!.rebuildPageContainer(new RebuildPageContainer({
+        containerTotalNum: panels.length, textObject: panels.map(p => new TextContainerProperty(p)),
+      }))
+      if (!ok) throw new Error('Glasses layout update failed; retrying on the next refresh.')
+      glassLayout = layout
+      glassContents.clear()
+      for (const p of panels) glassContents.set(p.containerID, p.content)
+      return
+    }
+    // Send the tap action/deadline first; extra framing updates must not delay it.
+    const priority = ['trip-action', 'trip-station', 'trip-detail', 'trip-header', 'trip-progress']
+    for (const panel of [...panels].sort((a, b) => priority.indexOf(a.containerName) - priority.indexOf(b.containerName))) {
+      if (closed) return
+      // Discard unsent content as soon as the tracker changes phase.
+      if (displayPhase() !== phaseAtSend) return
+      if (glassContents.get(panel.containerID) === panel.content) continue
+      const ok = await bridge!.textContainerUpgrade(new TextContainerUpgrade({containerID:panel.containerID,containerName:panel.containerName,content:panel.content}))
+      if (ok) glassContents.set(panel.containerID, panel.content)
+    }
+  }
+  void update().catch(console.error).finally(()=>{
       renderBusy=false
       // A bridge write may finish after a phase transition. Send the current
       // phase immediately, rather than leaving the previous countdown visible.
@@ -274,7 +304,7 @@ function refreshGlasses() {
 }
 window.setInterval(()=>{
   const now=stamp()
-  tracker.tick(now); tripUI.render()
+  tracker.tick(now); tripUI.render(glassesDiagnostic())
   renderPlot(history,baseline,el<HTMLInputElement>('center').checked,now)
   renderMotionComparison(history,phoneHistory,now)
   recordInfo()
