@@ -1,6 +1,6 @@
 # AlwaysOnTrack: G2 subway companion prototype
 
-An Even Hub G2 and Android phone prototype for testing route-aware subway station prompts. It includes an IMU explorer, a phone-motion station counter, and a Google Routes + MTA schedule planner that prepares ordered subway itineraries. Manual routes are also supported. The unused ASR interface/stub from the Even Hub scaffold remains in `src/ui.ts` and `src/asr/stt.ts`. No microphone is used; route preparation calls Google online, while tracking runs on the phone.
+An Even Hub G2 and Android phone prototype for route-aware subway station prompts. It combines a phone-motion station counter, Google Routes + MTA schedule matching, and a Gemini trip-planning agent with short G2 microphone recordings for speech input. Manual route search and itinerary import remain available. Route preparation needs internet; tracking runs on the phone.
 
 ## Project status
 
@@ -8,6 +8,8 @@ The current hackathon demo flow is working on the developer's G2 and Android tes
 
 Completed in the current prototype:
 
+- Gemini speech transcription and a constrained trip-planning agent: speak or type a request, answer location questions, review verified Google/MTA itineraries, and explicitly load one. The agent can request routes and recommend an existing result; it cannot invent intermediate stops. Local fixture tests pass; live Gemini and physical microphone validation await key configuration.
+- An optional 12-second-per-stop demo timing override for generated plans. Original provider schedules remain in the prepared itinerary and export; the tracker identifies simulated timing separately.
 - G2 IMU exploration with live X/Y/Z values, plots, summary statistics, movement labels, and JSON/CSV export.
 - Optional Android phone motion capture and side-by-side comparison with G2 readings.
 - A route editor for entering the current stop, later stops, and expected time between each pair. The app assumes the rider starts at the first listed stop.
@@ -24,10 +26,10 @@ Completed in the current prototype:
 
 Still to do or validate:
 
-- Live Google/MTA end-to-end route validation with a Routes API key, including a hand-checked NYC transfer journey. The provider connection and itinerary conversion are implemented; model/agent conversation, place disambiguation, and a polished review flow remain future work.
+- Live Gemini transcription and conversation validation once `GEMINI_API_KEY` is configured, followed by a complete spoken NYC transfer journey on the physical G2. Google API access and the MTA conversion pipeline were previously checked; each demo route still needs review.
 - Automatic sourcing and verification of platform and exit details. Preset directions are fictional examples; planned itineraries currently use line/headsign and general exit-sign guidance. The local transfer loop has been tested on G2; externally planned journeys still need a live check.
 - More motion recordings and threshold tuning, especially tests that compare ordinary seated movement with train departure and braking. The user reports the current demo transition works well; real-train reliability has not been established.
-- Phone sensor behavior during screen lock, app backgrounding, reconnection, and longer trips. The current experiment assumes the page stays in the foreground.
+- Reliable screen-lock/background sensing is outside this MVP. The lock test kept JavaScript and glasses communication running but lost phone acceleration. Keep the page visible and the phone screen on during the five-minute demo; no native Android companion or wake-lock feature is included.
 - Any use of G2 IMU data to improve detection. The glasses IMU is captured for diagnostics and comparison only; it does not affect departure or arrival decisions.
 
 ## Run with your phone and G2
@@ -46,6 +48,8 @@ On this machine an installed Node binary was found at:
 If the node/npm shims say no active version is configured, activate your installed version in nvm. The implementation was checked using that binary directly.
 
 ## Online route preparation
+
+For voice and conversational planning, see [Gemini setup and demo flow](docs/voice-agent.md). Add the separate `GEMINI_API_KEY` to `.env.local` and restart the server when ready. Manual Google/MTA search works without it.
 
 1. Set `GOOGLE_MAPS_API_KEY` in `.env.local` on the laptop. Enable Routes API and billing for the key. Never use a `VITE_` prefix for this secret.
 2. Run `npm run gtfs:import` to import the official MTA supplemented subway schedules. If downloading fails, download the supplemented ZIP from [MTA developer resources](https://www.mta.info/developers) and run `npm run gtfs:import -- "path/to/feed.zip"`.
@@ -103,6 +107,8 @@ The pure state machine is covered by `dev/station-tracker.test.mjs`; with Node 2
 Missing/nonfinite channels remain null in JSON and blank in CSV, not invented zeros. Valid zero values are retained. The SDK may normalize the native payload; these are SDK-delivered channels, not direct access to sensor registers. Phone browser motion events require a secure context in many implementations, may require host permission, and may be missing from this WebView. The normal QR command below serves plain HTTP from the laptop LAN, so Android may withhold phone sensor readings even though the glasses IMU works. The dashboard reports secure-context status and unavailable fields. Foreground events do not establish lock-screen continuity.
 
 ## Glasses layout
+
+For screen-off work, use the new **Screen-lock diagnostic** on the phone. It measures phone acceleration, JavaScript execution, glasses bridge writes and taps separately while locked, and saves the report for JSON export. It does not yet enable background tracking. See [the investigation and test procedure](docs/screen-lock.md).
 
 The G2 page uses borderless native text in four corners of its 576 x 288 canvas. Top left shows the boarding/next station; top right shows the train only while boarding, or GET OFF AT and the current ride endpoint while tracking. During tracking, bottom left shows detection/correction status and bottom right shows ride stop count. Boarding shows Tap once aboard at bottom right. The destination shows You have arrived at top left and Follow exit signs at top right. Unused corners and the center stay clear.
 

@@ -2,15 +2,17 @@ import { defaultSettings, demoSettings, parseRoute, StationTracker, type Tracker
 import { el } from './imu-ui'
 import { tripStatus } from './trip-status'
 import { mountPlannerControls } from './planner-ui'
-import { routeTextFromPlan } from './trip-plan'
+import { routeTextFromStops } from './trip-plan'
+import type { GlassesSpeech } from './asr/stt.ts'
+import { speechGlasses } from './asr/speech-view.ts'
 import { glassesView, renderGlassesPreview } from './glasses-view'
 
 // Fixed NYC demonstration; durations are simulated, not MTA schedules.
 const exampleRoute = (seconds: number) => `Times Sq-42 St | 0 | Board downtown N-line to Coney Island-Stillwell Av\n34 St-Herald Sq | ${seconds} | Board downtown F-line to Brooklyn | transfer\n23 St | ${seconds} | Stay on the F train\n14 St | ${seconds} | Follow exit signs`
 
-export function mountTripControls(tracker: StationTracker, now: () => number, onArm: () => void) {
+export function mountTripControls(tracker: StationTracker, now: () => number, onArm: () => void, speech?: GlassesSpeech) {
   const style = document.createElement('style')
-  style.textContent = '#trip-panel fieldset{border:1px solid #52687b;border-radius:7px;padding:12px}#trip-panel input{font:inherit;padding:8px;width:90px}#trip-panel details{margin:12px 0}#trip-events{max-height:280px;overflow:auto;overflow-wrap:anywhere}#trip-error{color:#ff8c92}#trip-route{height:110px}#trip-planner input{width:260px;max-width:100%}#trip-planner textarea{width:100%;min-height:100px}'
+  style.textContent = '#trip-panel fieldset{border:1px solid #52687b;border-radius:7px;padding:12px}#trip-panel input{font:inherit;padding:8px;width:90px}#trip-panel details{margin:12px 0}#trip-events{max-height:280px;overflow:auto;overflow-wrap:anywhere}#trip-error{color:#ff8c92}#trip-route{height:110px}#trip-planner input{width:260px;max-width:100%}#trip-planner input[type=checkbox]{width:auto}#trip-planner textarea{width:100%;min-height:100px}'
   document.head.append(style)
   el('trip-panel').innerHTML = `<h2>Experimental station counter</h2>
     <p><strong>Board a train, then single-tap the glasses to start tracking.</strong> Enable phone motion and load a route first. At a transfer, tracking pauses until you board the next train and tap again. Ordinary stops continue automatically. You can also use Start tracking on the phone.</p>
@@ -45,20 +47,22 @@ export function mountTripControls(tracker: StationTracker, now: () => number, on
   let lastRoute: unknown
   let lastDiagnostic: string | undefined
   const readSettings = () => Object.fromEntries(Object.keys(defaultSettings).map(k => [k, Number(el<HTMLInputElement>(`trip-${k}`).value)])) as TrackerSettings
-  mountPlannerControls(el('trip-planner'), plan => {
-    tracker.loadTripPlan(plan, readSettings(), now())
-    el<HTMLTextAreaElement>('trip-route').value = routeTextFromPlan(plan)
+  const plannerControls = mountPlannerControls(el('trip-planner'), (plan, options) => {
+    if (options.demoTiming) for (const [key, value] of Object.entries(demoSettings)) el<HTMLInputElement>(`trip-${key}`).value = String(value)
+    tracker.loadTripPlan(plan, readSettings(), now(), options.demoTiming ? 12 : undefined)
+    el<HTMLTextAreaElement>('trip-route').value = routeTextFromStops(tracker.route)
     el('trip-error').textContent = ''; render()
-  })
+  }, speech)
   function render(diagnostic?: string) {
     if (diagnostic !== undefined) lastDiagnostic = diagnostic
     const t = now(), active = tracker.active
     const view = tripStatus(tracker, t)
     const display = view.presentation, journey = display.journey
-    renderGlassesPreview(document.getElementById('glasses-preview')! as unknown as SVGSVGElement, glassesView(tracker, t, lastDiagnostic))
+    renderGlassesPreview(document.getElementById('glasses-preview')! as unknown as SVGSVGElement,
+      speech && (speech.busy || speech.snapshot().micMayBeOn) ? speechGlasses(speech.snapshot()) : glassesView(tracker, t, lastDiagnostic))
     el('trip-start-hint').textContent = display.pending ? 'Arrival detected: directions have advanced. Tap if not at this station to restore the previous position. Wait for the correction window to finish before tapping to board the next train.' : tracker.state === 'waiting-boarding' ? 'TRANSFER: board the next train, then SINGLE-TAP THE GLASSES to resume tracking. Walking between trains is ignored.' : tracker.state === 'ready' ? 'Board your train, then SINGLE-TAP THE GLASSES to begin tracking.' : tracker.state === 'idle' ? 'First load your route. Then board your train and single-tap the glasses.' : ''
     el<HTMLFieldSetElement>('trip-config').disabled = active
-    el<HTMLButtonElement>('trip-arm').disabled = !tracker.canArm
+    el<HTMLButtonElement>('trip-arm').disabled = !tracker.canArm || plannerControls.busy() || !!speech?.busy || !!speech?.snapshot().micMayBeOn
     el('trip-arm').textContent = tracker.state === 'waiting-boarding' ? 'Boarded next train: start tracking (or tap glasses)' : 'Start tracking (or tap glasses)'
     el<HTMLButtonElement>('trip-stop').disabled = !active
     el<HTMLButtonElement>('trip-depart').disabled = tracker.state !== 'waiting-departure'
@@ -73,7 +77,7 @@ export function mountTripControls(tracker: StationTracker, now: () => number, on
     }
     const current = display.current?.name
     el('trip-status').textContent = `${view.status}${current ? ` | ${display.pending ? 'Detected station' : 'Current'}: ${current} (${display.stationIndex + 1}/${tracker.route.length})` : ''}${display.nextStop ? ` | Next: ${display.nextStop.name}` : ''}`
-    el('trip-timing').textContent = view.timing
+    el('trip-timing').textContent = `${tracker.demoTravelSeconds ? `DEMO: simulated ${tracker.demoTravelSeconds}-second segments. ` : ''}${view.timing}`
     const instruction = display.state === 'complete' ? 'Follow exit signs.'
       : display.canArm ? view.instruction : tracker.sensing ? `Get off at ${journey.destination}.` : null
     el('trip-instruction').textContent = instruction ? `Instruction: ${instruction}` : ''
@@ -88,7 +92,10 @@ export function mountTripControls(tracker: StationTracker, now: () => number, on
       }))
     }
   }
-  function arm() { tracker.arm(now()); if (tracker.active) onArm(); render() }
+  function arm() {
+    if (plannerControls.busy() || speech?.busy || speech?.snapshot().micMayBeOn) { el('trip-error').textContent = 'Finish planning or cancel voice input before starting tracking.'; return }
+    tracker.arm(now()); if (tracker.active) onArm(); render()
+  }
   el('trip-load').onclick = () => {
     try {
       const settings = readSettings()

@@ -1,0 +1,217 @@
+{
+  "schemaVersion": 2,
+  "sources": {
+    "glasses": "G2 SDK IMU",
+    "phone": "Android DeviceMotionEvent exposed by Even app WebView"
+  },
+  "sdkVersion": "0.0.10",
+  "glassesUnits": "unknown",
+  "phoneUnits": "browser API: acceleration in m/s² when supplied; verify device/WebView implementation",
+  "glassesAxes": "SDK x/y/z; physical meaning unverified",
+  "phoneAxes": "DeviceMotionEvent device-relative x/y/z; orientation may differ from G2",
+  "timestamp": "Both t fields are monotonic milliseconds at WebView event receipt on one clock; wallTime is ISO UTC. They are receipt times, not sensor acquisition times.",
+  "secureContext": true,
+  "baselineDisplayOnly": {
+    "x": null,
+    "y": null,
+    "z": null
+  },
+  "sessions": [
+    {
+      "t": 461.5,
+      "action": "device:connected",
+      "pace": 100
+    },
+    {
+      "t": 1685.7999999523163,
+      "action": "device:connected",
+      "pace": 100
+    },
+    {
+      "t": 34787.799999952316,
+      "action": "phone-motion-enabled;secure-context:true",
+      "pace": 100
+    },
+    {
+      "t": 102893.29999995232,
+      "action": "phone-receipt-gap-ms:64446",
+      "pace": 100
+    },
+    {
+      "t": 138155.39999985695,
+      "action": "device:connected",
+      "pace": 100
+    }
+  ],
+  "markers": [],
+  "tripTracking": {
+    "route": [
+      {
+        "name": "Times Sq-42 St",
+        "travelSeconds": 0,
+        "instruction": "Board downtown N-line to Coney Island-Stillwell Av"
+      },
+      {
+        "name": "34 St-Herald Sq",
+        "travelSeconds": 12,
+        "instruction": "Board downtown F-line to Brooklyn",
+        "transfer": true
+      },
+      {
+        "name": "23 St",
+        "travelSeconds": 12,
+        "instruction": "Stay on the F train"
+      },
+      {
+        "name": "14 St",
+        "travelSeconds": 12,
+        "instruction": "Follow exit signs"
+      }
+    ],
+    "tripPlan": null,
+    "settings": {
+      "departureWindowMs": 500,
+      "departureThreshold": 0.35,
+      "departureSeconds": 0.7,
+      "windowMs": 250,
+      "motionThreshold": 0.35,
+      "quietThreshold": 0.25,
+      "motionSeconds": 0.4,
+      "dwellSeconds": 0.25,
+      "vetoSeconds": 10,
+      "settlingSeconds": 0.3
+    },
+    "state": "ready",
+    "stationIndex": 0,
+    "departureAt": null,
+    "watchAt": null,
+    "expectedAt": null,
+    "candidateUntil": null,
+    "retryAfter": null,
+    "cooldownReason": null,
+    "currentInstruction": "Board downtown N-line to Coney Island-Stillwell Av",
+    "brakingPhase": "arrival detection inactive",
+    "detector": "Experimental mean linear acceleration with separate departure and braking settings. Braking requires a coherent jolt, settling, then quiet dwell. Recoil is not required. Quiet is not proof of zero train speed. No calibrated confidence or physical braking classification.",
+    "events": [
+      {
+        "t": 12.5,
+        "action": "route-loaded",
+        "state": "ready",
+        "stationIndex": 0,
+        "detail": {
+          "route": [
+            {
+              "name": "Times Sq-42 St",
+              "travelSeconds": 0,
+              "instruction": "Board downtown N-line to Coney Island-Stillwell Av"
+            },
+            {
+              "name": "34 St-Herald Sq",
+              "travelSeconds": 12,
+              "instruction": "Board downtown F-line to Brooklyn",
+              "transfer": true
+            },
+            {
+              "name": "23 St",
+              "travelSeconds": 12,
+              "instruction": "Stay on the F train"
+            },
+            {
+              "name": "14 St",
+              "travelSeconds": 12,
+              "instruction": "Follow exit signs"
+            }
+          ],
+          "settings": {
+            "departureWindowMs": 500,
+            "departureThreshold": 0.35,
+            "departureSeconds": 0.7,
+            "windowMs": 250,
+            "motionThreshold": 0.35,
+            "quietThreshold": 0.25,
+            "motionSeconds": 0.4,
+            "dwellSeconds": 0.25,
+            "vetoSeconds": 10,
+            "settlingSeconds": 0.3
+          }
+        }
+      },
+      {
+        "t": 12.5,
+        "action": "station-instruction",
+        "state": "ready",
+        "stationIndex": 0,
+        "detail": {
+          "station": "Times Sq-42 St",
+          "instruction": "Board downtown N-line to Coney Island-Stillwell Av"
+        }
+      }
+    ]
+  },
+  "screenLockTest": {
+    "schemaVersion": 1,
+    "id": "lock-1792307136471",
+    "startedAt": 1792307136471,
+    "endedAt": 1792307204434,
+    "visible": {
+      "durationMs": 67963,
+      "heartbeats": 136,
+      "phoneEvents": 185,
+      "validLinearEvents": 185,
+      "glassesImuEvents": 0,
+      "taps": 4,
+      "bridgeAccepted": 88,
+      "bridgeFailed": 0,
+      "maxHeartbeatGapMs": 502,
+      "maxLinearGapMs": 64304
+    },
+    "hidden": {
+      "durationMs": 0,
+      "heartbeats": 0,
+      "phoneEvents": 0,
+      "validLinearEvents": 0,
+      "glassesImuEvents": 0,
+      "taps": 0,
+      "bridgeAccepted": 0,
+      "bridgeFailed": 0,
+      "maxHeartbeatGapMs": 0,
+      "maxLinearGapMs": 0
+    },
+    "events": [
+      {
+        "at": 1792307136471,
+        "type": "started"
+      },
+      {
+        "at": 1792307159164,
+        "type": "host-foreground-enter"
+      },
+      {
+        "at": 1792307162559,
+        "type": "host-foreground-exit"
+      },
+      {
+        "at": 1792307162850,
+        "type": "glasses-tap"
+      },
+      {
+        "at": 1792307165189,
+        "type": "glasses-tap"
+      },
+      {
+        "at": 1792307166089,
+        "type": "glasses-tap"
+      },
+      {
+        "at": 1792307166916,
+        "type": "glasses-tap"
+      },
+      {
+        "at": 1792307204434,
+        "type": "stopped"
+      }
+    ]
+  },
+  "glassesSamples": [],
+  "phoneMotionSamples": []
+}

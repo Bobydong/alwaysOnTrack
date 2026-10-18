@@ -23,6 +23,7 @@ export function mountDiagnostic() {
     <canvas id="compare-plot" aria-label="Phone and glasses motion magnitudes on a shared receipt-time axis"></canvas>
     <p class="hint" id="compare-scale">Phone acceleration magnitude (violet), phone acceleration including gravity (yellow), G2 vector magnitude (white). This chart compares sizes, not aligned directions.</p>
     <p class="hint">Motion events require a secure context in many WebViews. If enabled but every channel is blank, check HTTPS/localhost support. Phone samples stop when the WebView stops receiving events; foreground tests do not prove lock-screen continuity.</p></section>
+    <section id="lock-test-panel"></section>
     <section><h2>Record a movement</h2><div class="controls">
     <label>Label <select id="label"><option>still</option><option>phone only: handle/bag movement</option><option>glasses only: turn head</option><option>shared: seated jolt and lean</option><option>shared: departure lean</option><option>shared: braking lean</option><option>turn head left/right</option><option>nod up/down</option><option>tilt ear to shoulder</option><option>translate forward/back</option><option>translate left/right</option><option>translate up/down</option><option>train departure</option><option>train cruising</option><option>train braking</option><option>station dwell</option><option>tunnel stop</option></select></label>
     <button id="mark">Add marker</button><button id="record">Start recording</button></div>
@@ -38,7 +39,7 @@ export function mountDiagnostic() {
     <li>Keep the glasses level and translate them forward/back, sideways and vertically; stop between motions. Moving them by hand can help separate translation from head rotation.</li>
     <li>Repeat facing sideways. Do not assign a permanent train-forward axis from one pose.</li></ol>
     <p>Held changes during rotation may indicate orientation or gravity-sensitive acceleration. Brief translation spikes may support an acceleration hypothesis. Neither proves units or semantics; record evidence before naming axes or converting to g / m/s².</p>
-    <p>Tap glasses to add a marker. Double-tap opens system exit. The microphone is not used.</p>
+    <p>Tap glasses to add a marker. Double-tap opens system exit. The microphone is used only when you start a spoken trip request.</p>
     <ol><li>Enable phone motion; start G2 IMU; start one recording.</li><li>Record phone-only movement, then glasses/head-only movement.</li><li>Secure the phone in a pocket or bag and record several shared simulated departure/braking leans, with a few seconds still between each.</li><li>Export JSON. Compare phone linear acceleration, phone rotation, and G2 changes at the same receipt times.</li></ol>
     <p id="mode"></p></section></main>`
   const style = document.createElement('style')

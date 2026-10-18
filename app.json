@@ -1,14 +1,15 @@
 {
     "package_id":  "com.example.evenhubasr",
     "edition":  "202601",
-    "name":  "G2 IMU Explorer",
+    "name":  "AlwaysOnTrack",
     "version":  "0.1.0",
     "min_app_version":  "2.0.0",
     "min_sdk_version":  "0.0.10",
     "entrypoint":  "index.html",
     "permissions":  [
-
-                    ],
+        { "name": "g2-microphone", "desc": "Record a short spoken trip request when the rider starts voice input." },
+        { "name": "network", "desc": "Send spoken trip requests and load verified routes from the companion backend.", "whitelist": ["http://localhost:5173"] }
+    ],
     "supported_languages":  [
                                 "en"
                             ]

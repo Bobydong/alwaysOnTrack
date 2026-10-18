@@ -59,6 +59,7 @@ export function parseRoute(text: string): Stop[] {
 export class StationTracker {
   route: Stop[] = []
   tripPlan: TripPlan | null = null
+  demoTravelSeconds: number | null = null
   settings = { ...defaultSettings }
   state: TripState = 'idle'
   stationIndex = 0
@@ -118,17 +119,19 @@ export class StationTracker {
         settings.motionSeconds < 0.1 || settings.motionSeconds > 10 || settings.dwellSeconds < 0.2 || settings.dwellSeconds > 30 ||
         settings.settlingSeconds < 0 || settings.settlingSeconds > 3 ||
         settings.vetoSeconds < 1 || settings.vetoSeconds > 30) throw new Error('Check detector settings: motion threshold must be at least the quiet threshold; durations must be within the shown ranges.')
-    this.tripPlan = null
+    this.tripPlan = null; this.demoTravelSeconds = null
     this.route = checked; this.settings = { ...settings }; this.stationIndex = 0; this.departureAt = null
     this.candidateUntil = null; this.retryAfter = -Infinity; this.cooldownReason = null; this.resetEvidence(); this.state = 'ready'
     this.log(now, 'route-loaded', { route: this.route, settings: this.settings })
     this.logInstruction(now)
   }
-  loadTripPlan(value: unknown, settings: TrackerSettings, now: number) {
+  loadTripPlan(value: unknown, settings: TrackerSettings, now: number, demoTravelSeconds?: number) {
     const plan = parseTripPlan(value)
-    this.load(toTrackerStops(plan), settings, now)
+    if (demoTravelSeconds !== undefined && (!Number.isFinite(demoTravelSeconds) || demoTravelSeconds < 5 || demoTravelSeconds > 7200)) throw new Error('Invalid demo travel time.')
+    this.load(toTrackerStops(plan).map((s, i) => demoTravelSeconds !== undefined && i > 0 ? { ...s, travelSeconds: demoTravelSeconds } : s), settings, now)
     this.tripPlan = plan
-    this.log(now, 'trip-plan-loaded', { id: plan.id, source: plan.source, legs: plan.legs.length })
+    this.demoTravelSeconds = demoTravelSeconds ?? null
+    this.log(now, 'trip-plan-loaded', { id: plan.id, source: plan.source, legs: plan.legs.length, demoTravelSeconds: this.demoTravelSeconds })
   }
   arm(now: number) {
     if (!this.canArm) return
@@ -268,7 +271,7 @@ export class StationTracker {
     }
   }
   snapshot() {
-    return { route: this.route, tripPlan: this.tripPlan, settings: this.settings, state: this.state, stationIndex: this.stationIndex,
+    return { route: this.route, tripPlan: this.tripPlan, demoTravelSeconds: this.demoTravelSeconds, settings: this.settings, state: this.state, stationIndex: this.stationIndex,
       departureAt: this.departureAt, watchAt: this.watchAt, expectedAt: this.expectedAt, candidateUntil: this.candidateUntil,
       retryAfter: Number.isFinite(this.retryAfter) ? this.retryAfter : null, cooldownReason: this.cooldownReason,
       currentInstruction: this.currentInstruction,

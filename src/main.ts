@@ -5,13 +5,21 @@ import { mountDiagnostic, el, renderMotionComparison, renderPlot } from './imu-u
 import { StationTracker } from './station-tracker'
 import { mountTripControls } from './trip-ui'
 import { glassesView, glassesLayoutKey } from './glasses-view'
+import { LockTest, lockTestStorageKey, readLockTestReport, type LockTestReport } from './lock-test'
+import { lockTestGlasses, mountLockTestControls, renderLockTest } from './lock-test-ui'
+import { GlassesSpeech } from './asr/stt'
+import { speechGlasses } from './asr/speech-view'
 
 mountDiagnostic()
 const demo = new URLSearchParams(location.search).get('demo') === '1'
-el('mode').textContent = demo ? 'SYNTHETIC PREVIEW: these values are generated, not G2 sensor data.' : 'LIVE G2 MODE: no synthetic data. No API key or microphone needed.'
+el('mode').textContent = demo ? 'SYNTHETIC PREVIEW: these values are generated, not G2 sensor data.' : 'LIVE G2 MODE: no synthetic sensor data. Voice planning uses the glasses microphone and the Gemini backend; sensor tests work without an AI key.'
 const origin = performance.now()
 const stamp = () => performance.now() - origin
 const tracker = new StationTracker()
+const lockTest = new LockTest()
+let savedLockTest: LockTestReport | null = null
+try { savedLockTest = readLockTestReport(localStorage.getItem(lockTestStorageKey)) } catch { /* Some WebViews disable storage. */ }
+let lastLockSave = 0
 let bridge: EvenAppBridge | undefined
 let ready = false, running = false, busy = false, recording = false, phoneMotionOn = false, closed = false
 let previewTimer: number | undefined
@@ -32,9 +40,43 @@ const controls = () => {
   el<HTMLSelectElement>('pace').disabled = busy || running
 }
 const recordInfo = () => { el('record-info').textContent = `${recording ? 'RECORDING' : 'Not recording'} | G2 ${recorded.length} samples | phone ${phoneRecorded.length} events | ${marks.length} markers | G2 ${invalid} empty / phone ${phoneInvalid} empty. In memory only: export before reload.`; el('record').textContent = recording ? 'Stop recording' : 'Start recording' }
+const speech = new GlassesSpeech(async open => {
+  if (!bridge || !ready || (open && closed)) throw new Error('Connect the glasses through the Even app before using voice input.')
+  if (open && (tracker.active || lockTest.active)) throw new Error('Stop tracking or the screen-lock test before recording a trip request.')
+  if (open) el<HTMLButtonElement>('trip-arm').disabled = true
+  return bridge.audioControl(open)
+})
 const tripUI = mountTripControls(tracker, stamp, () => {
   if (!recording) { recording = true; mark('trip-tracking-start') }
-})
+}, speech)
+let lastSpeechPhase = speech.phase
+speech.subscribe(s => { if (s.phase !== lastSpeechPhase) { lastSpeechPhase = s.phase; refreshGlasses() } })
+function saveLockTest(force = false) {
+  const at = Date.now()
+  if (!force && !lockTest.active) return
+  if (!force && at - lastLockSave < 1000) return
+  const report = lockTest.snapshot(at)
+  if (!report) return
+  savedLockTest = report; lastLockSave = at
+  try { localStorage.setItem(lockTestStorageKey, JSON.stringify(report)) }
+  catch { el('lock-test-message').textContent = 'Diagnostic persistence unavailable; export before closing the app.' }
+}
+mountLockTestControls(async () => {
+  if (!ready || !bridge) throw new Error('Open this page in the Even app with glasses connected before starting the test.')
+  if (tracker.active) throw new Error('Stop trip tracking before running the screen-lock diagnostic.')
+  if (speech.busy || speech.snapshot().micMayBeOn) throw new Error('Finish or cancel voice input before running the screen-lock test.')
+  await enablePhoneMotion()
+  if (!phoneMotionOn) throw new Error('Enable phone motion successfully before starting the test.')
+  lockTest.start(Date.now(), document.hidden); saveLockTest(true)
+  el<HTMLButtonElement>('trip-arm').disabled = true
+  el('lock-test-message').textContent = 'Test started. Lock for 30 seconds, watch the glasses counter, and single-tap once while locked. Then unlock and stop the test.'
+  renderLockTest(savedLockTest, true); refreshGlasses()
+}, () => {
+  lockTest.stop(Date.now(), document.hidden); saveLockTest(true)
+  el('lock-test-message').textContent = 'Test stopped. Prepare diagnostic JSON and use Save to laptop. Include whether the glasses counter advanced while locked.'
+  renderLockTest(savedLockTest, false); refreshGlasses()
+}, () => exportData('json'))
+renderLockTest(savedLockTest, false)
 function mark(text = label()) {
   if (!recording) { status('Start recording first to save a marker.'); return }
   marks.push({ t: stamp(), wallTime: new Date().toISOString(), label: text }); recordInfo()
@@ -42,6 +84,7 @@ function mark(text = label()) {
 function receive(raw: { x?: number; y?: number; z?: number }) {
   if (!running || closed) return
   const vector = readVector(raw)
+  lockTest.glassesImu(Date.now(), document.hidden)
   if (axes.every(a => vector[a] === null)) { invalid++; return }
   const sample: Sample = { ...vector, t: stamp(), wallTime: new Date().toISOString(), label: label() }
   if (sample.t - lastReceipt > 3000) {
@@ -59,6 +102,7 @@ function receive(raw: { x?: number; y?: number; z?: number }) {
 function receivePhone(event: DeviceMotionEvent) {
   if (!phoneMotionOn || closed) return
   const sample = phoneMotionFromEvent(event, stamp(), new Date().toISOString(), label())
+  lockTest.phone(Date.now(), document.hidden, axes.every(a => sample.acceleration[a] !== null))
   const previousPhase = displayPhase()
   if (!document.hidden) tracker.ingest(sample)
   if (previousPhase !== displayPhase()) { tripUI.render(); refreshGlasses() }
@@ -159,13 +203,14 @@ el('baseline').onclick = () => {
   el('baseline-info').textContent='Captured two-second mean: '+JSON.stringify(baseline)+'. This changes the plot only; raw readings and exports stay unchanged.'
 }
 function exportData(format: 'json' | 'csv') {
-  if(!recorded.length && !phoneRecorded.length && !(format === 'json' && tracker.events.length)){status('No recorded samples. Start one or both motion sources, then Start recording.');return}
+  if(!recorded.length && !phoneRecorded.length && !(format === 'json' && (tracker.events.length || savedLockTest))){status('No recorded samples. Start one or both motion sources, then Start recording.');return}
   const content = format==='csv' ? combinedCsv(recorded,phoneRecorded) : JSON.stringify({ schemaVersion:2,
     sources:{ glasses:demo?'synthetic':'G2 SDK IMU', phone:'Android DeviceMotionEvent exposed by Even app WebView' },
     sdkVersion:'0.0.10', glassesUnits:'unknown', phoneUnits:'browser API: acceleration in m/s² when supplied; verify device/WebView implementation',
     glassesAxes:'SDK x/y/z; physical meaning unverified', phoneAxes:'DeviceMotionEvent device-relative x/y/z; orientation may differ from G2',
     timestamp:'Both t fields are monotonic milliseconds at WebView event receipt on one clock; wallTime is ISO UTC. They are receipt times, not sensor acquisition times.',
     secureContext:window.isSecureContext, baselineDisplayOnly:baseline, sessions, markers:marks, tripTracking:tracker.snapshot(),
+    screenLockTest:lockTest.snapshot(Date.now()) ?? savedLockTest,
     glassesSamples:recorded, phoneMotionSamples:phoneRecorded },null,2)
   if(downloadUrl)URL.revokeObjectURL(downloadUrl)
   downloadUrl=URL.createObjectURL(new Blob([content],{type:format==='json'?'application/json':'text/csv'}))
@@ -220,7 +265,9 @@ el('copy-export').onclick=async()=>{
 let unsubscribe = () => {}, unsubscribeDevice = () => {}
 function cleanup() {
   if(closed)return
+  lockTest.event('app-exit', Date.now()); saveLockTest(true)
   closed=true; running=false; recording=false; window.clearInterval(previewTimer)
+  void speech.cancel()
   tracker.stop(stamp())
   if(phoneListener)window.removeEventListener('devicemotion',phoneListener)
   phoneListener=undefined;phoneMotionOn=false
@@ -239,6 +286,7 @@ async function initialize() {
   glassLayout = glassesLayoutKey(panels)
   for (const panel of panels) glassContents.set(panel.containerID, panel.content)
   unsubscribe=bridge.onEvenHubEvent(event=>{
+    if (event.audioEvent) { speech.sendPcm(event.audioEvent.audioPcm); return }
     const sys=event.sysEvent
     // Handle IMU before zero-value click normalization. An IMU envelope is never a tap.
     if(sys?.imuData){receive(sys.imuData);return}
@@ -246,8 +294,15 @@ async function initialize() {
     const textType=event.textEvent ? event.textEvent.eventType??OsEventTypeList.CLICK_EVENT : null
     if(sysType===OsEventTypeList.DOUBLE_CLICK_EVENT || textType===OsEventTypeList.DOUBLE_CLICK_EVENT){void bridge!.shutDownPageContainer(1).catch(console.error);return}
     if(sysType===OsEventTypeList.SYSTEM_EXIT_EVENT || sysType===OsEventTypeList.ABNORMAL_EXIT_EVENT){cleanup();return}
-    if(sysType===OsEventTypeList.FOREGROUND_ENTER_EVENT){tracker.suspend(stamp(), 'App returned to foreground; rebuilding sensor evidence.');status('Returned to foreground. Check stream continuity; if stale, Stop IMU then Start.');return}
+    if(sysType===OsEventTypeList.FOREGROUND_ENTER_EVENT){lockTest.event('host-foreground-enter', Date.now()); tracker.suspend(stamp(), 'App returned to foreground; rebuilding sensor evidence.');status('Returned to foreground. Check stream continuity; if stale, Stop IMU then Start.');return}
+    if(sysType===OsEventTypeList.FOREGROUND_EXIT_EVENT){lockTest.event('host-foreground-exit', Date.now());saveLockTest(true);return}
     if(sysType===OsEventTypeList.CLICK_EVENT || textType===OsEventTypeList.CLICK_EVENT){
+      if (speech.busy || speech.snapshot().micMayBeOn) {
+        if (speech.phase === 'recording') void speech.stop()
+        else if (speech.phase === 'error') void speech.cancel()
+        return
+      }
+      if (lockTest.active) { lockTest.tap(Date.now(), document.hidden); saveLockTest(true); refreshGlasses(); return }
       if (!tripUI.tap()) mark('glasses tap: '+label())
       refreshGlasses()
     }
@@ -259,6 +314,8 @@ async function initialize() {
   ready=true; controls(); status('G2 page ready. Press Start IMU on the phone, then Start recording.')
 }
 function displayPhase() {
+  if (speech.busy || speech.snapshot().micMayBeOn) return `speech:${speech.phase}`
+  if (lockTest.active) return `lock-test:${lockTest.report!.id}`
   return `${tracker.state}:${tracker.stationIndex}:${tracker.brakingPhase}:${tracker.cooldownReason}`
 }
 function glassesDiagnostic() {
@@ -268,7 +325,8 @@ function glassesDiagnostic() {
 function refreshGlasses() {
   if(!bridge || !ready || closed || renderBusy)return
   const now = stamp()
-  const panels = glassesView(tracker, now, glassesDiagnostic())
+  const panels = speech.busy || speech.snapshot().micMayBeOn ? speechGlasses(speech.snapshot())
+    : lockTest.active ? lockTestGlasses(lockTest.report!, Date.now()) : glassesView(tracker, now, glassesDiagnostic())
   const layout = glassesLayoutKey(panels)
   if(layout === glassLayout && panels.every(panel => glassContents.get(panel.containerID) === panel.content))return
   const phaseAtSend = displayPhase()
@@ -278,6 +336,7 @@ function refreshGlasses() {
       const ok = await bridge!.rebuildPageContainer(new RebuildPageContainer({
         containerTotalNum: panels.length, textObject: panels.map(p => new TextContainerProperty(p)),
       }))
+      if (displayPhase() === phaseAtSend) lockTest.bridgeResult(ok, Date.now(), document.hidden)
       if (!ok) throw new Error('Glasses layout update failed; retrying on the next refresh.')
       glassLayout = layout
       glassContents.clear()
@@ -292,10 +351,11 @@ function refreshGlasses() {
       if (displayPhase() !== phaseAtSend) return
       if (glassContents.get(panel.containerID) === panel.content) continue
       const ok = await bridge!.textContainerUpgrade(new TextContainerUpgrade({containerID:panel.containerID,containerName:panel.containerName,content:panel.content}))
+      if (displayPhase() === phaseAtSend) lockTest.bridgeResult(ok, Date.now(), document.hidden)
       if (ok) glassContents.set(panel.containerID, panel.content)
     }
   }
-  void update().catch(console.error).finally(()=>{
+  void update().catch(error => { if (displayPhase() === phaseAtSend) lockTest.bridgeResult(false, Date.now(), document.hidden); console.error(error) }).finally(()=>{
       renderBusy=false
       // A bridge write may finish after a phase transition. Send the current
       // phase immediately, rather than leaving the previous countdown visible.
@@ -304,10 +364,15 @@ function refreshGlasses() {
 }
 window.setInterval(()=>{
   const now=stamp()
-  tracker.tick(now); tripUI.render(glassesDiagnostic())
-  renderPlot(history,baseline,el<HTMLInputElement>('center').checked,now)
-  renderMotionComparison(history,phoneHistory,now)
-  recordInfo()
+  lockTest.heartbeat(Date.now(), document.hidden); saveLockTest()
+  tracker.tick(now)
+  if (!document.hidden) {
+    tripUI.render(glassesDiagnostic())
+    if (lockTest.active) el<HTMLButtonElement>('trip-arm').disabled = true
+    renderPlot(history,baseline,el<HTMLInputElement>('center').checked,now)
+    renderMotionComparison(history,phoneHistory,now)
+    recordInfo(); renderLockTest(lockTest.snapshot(Date.now()) ?? savedLockTest, lockTest.active)
+  }
   if(running && now-Math.max(lastReceipt,startedAt)>3000)status('No IMU samples for over 3 seconds. Check glasses connection/host support, then Stop IMU and Start again. No synthetic values are substituted.')
   if(phoneMotionOn && now-Math.max(lastPhoneReceipt,0)>3000 && lastPhoneReceipt===-Infinity)
     el('phone-status').textContent=`Listener active but no phone samples yet. Secure context: ${window.isSecureContext}. Check Android/WebView motion permission and non-null fields.`
@@ -317,6 +382,9 @@ window.setInterval(()=>{
 },500)
 window.addEventListener('beforeunload',cleanup)
 document.addEventListener('visibilitychange', () => {
+  lockTest.visibility(document.hidden, Date.now()); saveLockTest(true)
   if (document.hidden) tracker.suspend(stamp(), 'Page hidden; motion continuity is unknown.')
+  if (document.hidden && speech.busy) void speech.cancel()
 })
+window.addEventListener('pagehide', () => { lockTest.event('pagehide', Date.now()); saveLockTest(true) })
 void initialize().catch(error=>{status(String(error));controls()})

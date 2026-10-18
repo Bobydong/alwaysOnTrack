@@ -101,5 +101,8 @@ export function toTrackerStops(plan: TripPlan): Stop[] {
 }
 
 export function routeTextFromPlan(plan: TripPlan) {
-  return toTrackerStops(plan).map(s => `${s.name.replaceAll('|', '/')} | ${s.travelSeconds} | ${(s.instruction ?? '').replaceAll('|', '/')}${s.transfer ? ' | transfer' : ''}`).join('\n')
+  return routeTextFromStops(toTrackerStops(plan))
+}
+export function routeTextFromStops(stops: Stop[]) {
+  return stops.map(s => `${s.name.replaceAll('|', '/')} | ${s.travelSeconds} | ${(s.instruction ?? '').replaceAll('|', '/')}${s.transfer ? ' | transfer' : ''}`).join('\n')
 }
